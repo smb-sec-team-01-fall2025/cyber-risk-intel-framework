@@ -13,15 +13,35 @@
 
 ### Backend
 
-<!-- quickstart for backend (local run) -->
+```bash
+# Navigate to backend directory
+cd src/backend
 
-- ?
+# Install dependencies
+pip install fastapi uvicorn
+
+# Start the development server
+uvicorn app:app --reload --port 8000
+```
+
+The backend API will be available at http://localhost:8000
 
 ### Frontend
 
-<!-- quickstart for frontend (local run) -->
+```bash
+# Navigate to frontend directory
+cd src/frontend
 
-- ?
+# Install dependencies
+npm install
+
+# Start the development server
+npm run dev --port 5173
+```
+
+The frontend application will be available at http://localhost:5173
+
+- Health check page: http://localhost:5173/health
 
 ## How to set environment variables
 
