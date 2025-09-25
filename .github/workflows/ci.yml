@@ -10,11 +10,18 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m venv .venv && . .venv/bin/activate && pip install ruff pytest
-      - run: . .venv/bin/activate && ruff src/backend || true
+      - run: . .venv/bin/activate && ruff check src/backend || true
       - run: . .venv/bin/activate && pytest -q || true
 
   secrets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: gitleaks/gitleaks-action@v2
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@v3.63.0
+        with:
+          path: .
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
