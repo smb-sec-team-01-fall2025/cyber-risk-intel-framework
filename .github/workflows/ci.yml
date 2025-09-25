@@ -46,14 +46,17 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies and generate requirements
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pip-audit fastapi uvicorn
-          pip freeze > requirements-dev.txt
+          pip install fastapi uvicorn pytest ruff pip-audit
+          # Generate requirements.txt for future reference
+          pip freeze > requirements.txt
+          # Create a copy for the audit step
+          cp requirements.txt requirements-lock.txt
 
       - name: Security audit
-        run: pip-audit -r requirements-dev.txt || true
+        run: pip-audit -r requirements-lock.txt || true
 
       - name: Lint code
         run: ruff check --output-format=github .
