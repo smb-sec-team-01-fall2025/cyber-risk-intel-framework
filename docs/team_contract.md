@@ -5,7 +5,7 @@
 | Name                  | Email                  | Discord       | Role |
 | --------------------- | ---------------------- | ------------- | ---- |
 | Ben Blake             | bebpph@umsystem.edu    | @ozneb        | ?    |
-| Tina Nguyen           | ?                      | @tinana_2k    | ?    |
+| Tina Nguyen           | qpnh58@umsystem.edu                      | @tinana_2k    | ?    |
 | Bhavani Adula         | adulabhavani@gmail.com | @bhavani_223  | ?    |
 | Geethika Padamati     | ?                      | @geethss8404  | ?    |
 | Mukunda Chakravartula | ?                      | @mukunda5125  | ?    |
