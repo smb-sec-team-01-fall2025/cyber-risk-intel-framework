@@ -2,14 +2,14 @@
 
 ## Team
 
-| Name                  | Email                  | Discord      | Role |
-| --------------------- | ---------------------- | ------------ | ---- |
-| Ben Blake             | bebpph@umsystem.edu    | @ozneb       | ?    |
-| Tina Nguyen           | ?                      | @tinana_2k   | ?    |
-| Bhavani Adula         | adulabhavani@gmail.com | @bhavani_223 | ?    |
-| Geethika Padamati     | ?                      | @geethss8404 | ?    |
-| Mukunda Chakravartula | ?                      | @mukunda5125 | ?    |
-| Srujana Kunta         | ?                      | ?            | ?    |
+| Name                  | Email                  | Discord       | Role |
+| --------------------- | ---------------------- | ------------- | ---- |
+| Ben Blake             | bebpph@umsystem.edu    | @ozneb        | ?    |
+| Tina Nguyen           | ?                      | @tinana_2k    | ?    |
+| Bhavani Adula         | adulabhavani@gmail.com | @bhavani_223  | ?    |
+| Geethika Padamati     | ?                      | @geethss8404  | ?    |
+| Mukunda Chakravartula | ?                      | @mukunda5125  | ?    |
+| Srujana Kunta         | ?                      | @srujanakunta | ?    |
 
 ## Meetings
 
