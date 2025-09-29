@@ -2,35 +2,29 @@
 
 ## Team
 
-| Name                  | Email                  | Discord       | Role |
-| --------------------- | ---------------------- | ------------- | ---- |
-| Ben Blake             | bebpph@umsystem.edu    | @ozneb        | ?    |
-| Tina Nguyen           | qpnh58@umsystem.edu                      | @tinana_2k    | ?    |
-| Bhavani Adula         | adulabhavani@gmail.com | @bhavani_223  | ?    |
-| Geethika Padamati     | ?                      | @geethss8404  | ?    |
-| Mukunda Chakravartula | ?                      | @mukunda5125  | ?    |
-| Srujana Kunta         | ?                      | @srujanakunta | ?    |
+| Name                  | Email                  | Discord       | Role              |
+| --------------------- | ---------------------- | ------------- | ----------------- |
+| Ben Blake             | bebpph@umsystem.edu    | @ozneb        | Team Lead         |
+| Tina Nguyen           | qpnh58@umsystem.edu    | @tinana_2k    | Data/Detection    |
+| Bhavani Adula         | adulabhavani@gmail.com | @bhavani_223  | Backend/Agents    |
+| Geethika Padamati     | ?                      | @geethss8404  | Risk & Compliance |
+| Mukunda Chakravartula | ?                      | @mukunda5125  | DevOps            |
+| Srujana Kunta         | ?                      | @srujanakunta | Frontend          |
 
 ## Meetings
-
-<!-- Meetings: day/time + async plan if missed -->
 
 - [when2meet](https://www.when2meet.com/?32265023-nrAzu)
 
 ## Decisions
 
-<!-- - Decisions: quorum & tie-break -->
-
-- ?
+- 1/2 quorum
+- Tie-break: Team Lead
 
 ## Code Review Rules
 
-<!-- - Code review rules (1 reviewer min; “two-thumbs for risky changes”) -->
-
-- ?
+- 1 reviewer min
+- Two-thumbs for risky changes
 
 ## SLA
 
-<!-- - SLA: PR response within 24h on weekdays -->
-
-- ?
+- PR response within 24h on weekdays
