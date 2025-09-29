@@ -2,12 +2,12 @@
 
 ## Team Roster & Roles
 
-- [@ben-blake](https://github.com/ben-blake) - ?
-- [@tinana2k](https://github.com/tinana2k) - ?
-- [@bhavani-adula](https://github.com/Bhavani-Adula) - ?
-- [@geethspadamati](https://github.com/Geethspadamati) - ?
-- [@mukunda5125](https://github.com/mukunda5125) - ?
-- [@srujanareddykunta](https://github.com/srujanareddykunta-cell) - ?
+- [@ben-blake](https://github.com/ben-blake) - Team Lead
+- [@tinana2k](https://github.com/tinana2k) - Data/Detection
+- [@bhavani-adula](https://github.com/Bhavani-Adula) - Backend/Agents
+- [@geethspadamati](https://github.com/Geethspadamati) - Risk & Compliance
+- [@mukunda5125](https://github.com/mukunda5125) - DevOps
+- [@srujanareddykunta](https://github.com/srujanareddykunta-cell) - Frontend
 
 ## Quickstart
 
