@@ -7,23 +7,16 @@
 
 ## SSH Public Key
 
-<!-- One SSH public key (primary ops contact) -->
+- TBD
 
-- ?
+## Stack
 
-## Desired Stack
-
-<!-- - Python 3.11
+- Python 3.11
 - Node 20
-- Postgres -->
-
-- ?
 
 ## Required Ports
 
-<!-- - 80/443 only, justify others if needed -->
-
-- ?
+- 80/443 only
 
 ## Contact Email for Outage Notices
 
