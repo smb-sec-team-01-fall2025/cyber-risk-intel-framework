@@ -14,14 +14,11 @@
 ### Backend
 
 ```bash
-# Navigate to backend directory
-cd src/backend
-
 # Install dependencies
 pip install fastapi uvicorn
 
 # Start the development server
-uvicorn app:app --reload --port 8000
+uvicorn src.backend.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The backend API will be available at http://localhost:8000
