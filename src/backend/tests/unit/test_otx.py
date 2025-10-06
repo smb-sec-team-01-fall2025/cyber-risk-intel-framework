@@ -1,4 +1,3 @@
-import pytest
 
 def test_otx_client_mock(monkeypatch):
     """Tests the OTX client with a mocked API response."""
