@@ -1,7 +1,8 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, JSON, DateTime, func
 
-class Base(DeclarativeBase): pass
+class Base(DeclarativeBase): 
+  pass
 
 class Asset(Base):
   __tablename__ = "assets"
