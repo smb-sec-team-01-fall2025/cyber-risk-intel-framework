@@ -7,6 +7,8 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
+from src.backend.db.models import Base  # your DeclarativeBase
+
 
 # --- Make 'src' importable (add repo root to sys.path) ---
 # env.py is at: repo/src/backend/db/migrations/env.py
@@ -15,7 +17,6 @@ repo_root = Path(__file__).resolve().parents[4]
 sys.path.append(str(repo_root))
 
 # Now this works (PEP 420 namespace package or src/__init__.py)
-from src.backend.db.models import Base  # your DeclarativeBase
 
 # Alembic config
 config = context.config
