@@ -8,19 +8,17 @@ export default function Health() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchHealth = async () => {
-      const response = await getHealth();
-
-      if (response.error) {
-        setError(response.error);
-      } else if (response.data) {
-        setData(response.data);
-      }
-
-      setLoading(false);
-    };
-
-    fetchHealth();
+    // Health check is at the root, not under /api
+    fetch('/health')
+      .then((r) => r.json())
+      .then((data) => {
+        setData(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError('Failed to fetch health data.');
+        setLoading(false);
+      });
   }, []);
 
   return (
