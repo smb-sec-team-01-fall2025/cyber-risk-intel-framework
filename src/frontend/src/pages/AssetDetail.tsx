@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { Asset, IntelEvent } from '../types';
 
 export default function AssetDetailPage() {
   const { id } = useParams();
-  const [asset, setAsset] = useState<any>(null);
+  const [asset, setAsset] = useState<Asset | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -71,7 +72,7 @@ export default function AssetDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {asset.recent_intel.map((intel: any) => (
+              {asset.recent_intel.map((intel: IntelEvent) => (
                 <tr key={intel.id}>
                   <td>{intel.source}</td>
                   <td>{intel.indicator}</td>

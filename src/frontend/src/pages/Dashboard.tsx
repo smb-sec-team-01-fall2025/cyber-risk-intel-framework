@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Asset, Stats, Version } from '../types';
 
 // A simple reusable card component
 const StatCard = ({
@@ -15,7 +16,7 @@ const StatCard = ({
 );
 
 // Version information component
-const VersionInfo = ({ version }: { version: any }) => (
+const VersionInfo = ({ version }: { version: Version | null }) => (
   <div className="version-info">
     <p>
       Commit: <span>{version?.commit || 'N/A'}</span>
@@ -32,8 +33,8 @@ const VersionInfo = ({ version }: { version: any }) => (
 );
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<any>(null);
-  const [version, setVersion] = useState<any>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [version, setVersion] = useState<Version | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,8 +55,12 @@ export default function Dashboard() {
 
         setStats(statsData);
         setVersion(versionData);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('An unknown error occurred');
+        }
       } finally {
         setLoading(false);
       }
@@ -88,7 +93,7 @@ export default function Dashboard() {
 }
 
 function TopRiskyAssets() {
-  const [assets, setAssets] = useState<any[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
