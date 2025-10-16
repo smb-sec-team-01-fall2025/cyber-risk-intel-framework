@@ -24,8 +24,6 @@ def upgrade() -> None:
                type_=sa.String(length=50),
                existing_nullable=True)
 
-    op.execute("ALTER TYPE datasensitivityenum ADD VALUE IF NOT EXISTS 'Medium'")
-
 
 def downgrade() -> None:
     op.alter_column('assets', 'type',
