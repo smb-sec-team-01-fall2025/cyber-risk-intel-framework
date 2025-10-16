@@ -1,10 +1,14 @@
 class OSINTClient:
-    """Base class for OSINT client adapters."""
+    """
+    Base class for OSINT client implementations.
+    """
     source = "base"
 
     def fetch_sample(self, **kwargs) -> list[dict]:
         """
-        Fetch a sample of OSINT data.
-        Should be implemented by subclasses.
+        Fetches a sample of intelligence data.
+
+        This method should be implemented by subclasses to interact with a specific
+        OSINT API, handle pagination, and normalize the data into a common format.
         """
         raise NotImplementedError

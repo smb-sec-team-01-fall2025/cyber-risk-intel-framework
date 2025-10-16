@@ -1,36 +1,29 @@
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
 import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 
-# Ensure DB_URL is loaded from environment
-DB_URL = os.getenv("DB_URL")
-if not DB_URL:
-    raise RuntimeError("DB_URL environment variable is not set.")
+DATABASE_URL = os.getenv("DB_URL", "postgresql+psycopg2://smbuser:smbpass@db:5432/smbsec")
 
-engine = create_engine(DB_URL, future=True)
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_session():
-    """FastAPI dependency to get a DB session."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
+@contextmanager
 def session_scope():
-    """Context manager for DB sessions in background tasks."""
-    from contextlib import contextmanager
-    
-    @contextmanager
-    def scope():
-        db = SessionLocal()
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
-    return scope()
+    """Provide a transactional scope around a series of operations."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

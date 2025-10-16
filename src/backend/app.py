@@ -1,27 +1,18 @@
-# src/backend/app.py
-from fastapi import FastAPI
-from contextlib import asynccontextmanager
-import asyncio
-from .routers import stats, osint
-from .scheduler.jobs import run_osint_poll
+from fastapi import FastAPI, BackgroundTasks
 import os
 import time
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # On startup, run scheduler
-    print("Starting background OSINT poller...")
-    task = asyncio.create_task(run_osint_poll())
-    yield
-    # On shutdown, clean up
-    print("Stopping background OSINT poller...")
-    task.cancel()
+from api import stats, osint, assets
+from scheduler import jobs
 
 app = FastAPI(
     title="SMB Sec Platform",
-    version="0.2.0",
-    lifespan=lifespan
+    version="0.3.0",
 )
+
+@app.on_event("startup")
+def startup_event():
+    jobs.start_scheduler()
 
 @app.get("/health")
 def health():
@@ -29,11 +20,12 @@ def health():
 
 @app.get("/version")
 def version():
-    """Returns the git commit hash and build timestamp."""
     return {
         "commit": os.getenv("GIT_COMMIT", "unknown"),
-        "built_at": os.getenv("BUILD_AT", str(time.time()))
+        "built_at": os.getenv("BUILD_AT", time.time())
     }
 
-app.include_router(stats.router, prefix="/api")
-app.include_router(osint.router, prefix="/api")
+# Include routers
+app.include_router(stats.router, prefix="/api", tags=["stats"])
+app.include_router(osint.router, prefix="/api", tags=["osint"])
+app.include_router(assets.router, prefix="/api", tags=["assets"])

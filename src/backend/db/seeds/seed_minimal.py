@@ -1,54 +1,51 @@
-import os
+# create one asset; print row counts
 from sqlalchemy import create_engine, select, func
-from sqlalchemy.orm import Session
-from src.backend.db.models import Asset, IntelEvent, RiskItem
+from sqlalchemy.orm import sessionmaker
+import os
+import sys
 
-DB_URL = os.getenv("DB_URL")
-if not DB_URL:
-    raise RuntimeError("DB_URL not set")
+# Add the parent directory to the path to allow imports from `db`
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-engine = create_engine(DB_URL, future=True)
+from db.models import Asset, IntelEvent, RiskItem
 
-with Session(engine) as s:
-    # Count helpers
-    asset_count = s.scalar(select(func.count()).select_from(Asset))
-    intel_count = s.scalar(select(func.count()).select_from(IntelEvent))
-    risk_count = s.scalar(select(func.count()).select_from(RiskItem))
+DATABASE_URL = os.getenv("DB_URL", "postgresql+psycopg2://smbuser:smbpass@localhost:5432/smbsec")
 
-    # Seed assets
-    if asset_count == 0:
-        s.add_all([
-            Asset(name="Demo Web Server", type="Service", criticality=3),
-            Asset(name="Customer Database", type="Data", criticality=5),
-        ])
-        s.commit()
-        print("Inserted demo assets")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    # Seed intel event
-    if intel_count == 0:
-        s.add(IntelEvent(
-            source="otx",
-            indicator="8.8.8.8",
-            raw={"note": "example seeded intel"},
-            severity=2
-        ))
-        s.commit()
-        print("Inserted demo intel event")
+def seed_data():
+    session = SessionLocal()
+    try:
+        # Check if data exists
+        asset_count = session.execute(select(func.count(Asset.id))).scalar_one()
+        if asset_count > 0:
+            print("Database already seeded. Skipping.")
+            return
 
-    # Seed risk item
-    if risk_count == 0:
-        asset_id = s.scalar(select(Asset.id).limit(1))
-        s.add(RiskItem(
-            asset_id=asset_id,
-            title="Outdated software package",
-            likelihood=3,
-            impact=4
-        ))
-        s.commit()
-        print("Inserted demo risk item")
+        print("Seeding database with initial data...")
 
-    # Show final counts
-    print("✅ Seed complete")
-    print("Assets:", s.scalar(select(func.count()).select_from(Asset)))
-    print("Intel Events:", s.scalar(select(func.count()).select_from(IntelEvent)))
-    print("Risk Items:", s.scalar(select(func.count()).select_from(RiskItem)))
+        # Create a sample asset
+        sample_asset = Asset(
+            name="Primary Web Server",
+            type="HW",
+            criticality=5
+        )
+        session.add(sample_asset)
+        session.commit()
+        print(f"Added 1 sample asset.")
+
+        # Print final counts
+        a = session.execute(select(func.count(Asset.id))).scalar_one()
+        e = session.execute(select(func.count(IntelEvent.id))).scalar_one()
+        r = session.execute(select(func.count(RiskItem.id))).scalar_one()
+        print(f"Total counts -> Assets: {a}, Intel Events: {e}, Risk Items: {r}")
+
+    except Exception as e:
+        print(f"An error occurred during seeding: {e}")
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    seed_data()

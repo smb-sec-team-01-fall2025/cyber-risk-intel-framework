@@ -1,17 +1,22 @@
-# app:
-#   env: ${APP_ENV}
-#   base_url: ${BASE_URL}
+# Application Settings
+app:
+  env: ${APP_ENV:dev}
+  base_url: ${BASE_URL:http://localhost:8000}
 
-# db:
-#   url: ${DB_URL}
+# Database Configuration
+db:
+  url: ${DB_URL}
 
-# logging:
-#   level: INFO
+# Logging Configuration
+logging:
+  level: INFO
 
-# scheduling:
-#   osint_poll_minutes: 60
+# Scheduler Settings
+scheduling:
+  osint_poll_minutes: 60
 
-# rate_limits:
-#   osint:
-#     shodan: 60
-#     censys: 60
+# API Rate Limits
+rate_limits:
+  osint:
+    shodan: 60
+    censys: 60
