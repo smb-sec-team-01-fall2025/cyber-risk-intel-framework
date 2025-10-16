@@ -1,5 +1,7 @@
 # AI-Augmented Cyber Risk & Threat Intelligence Framework for SMBs
 
+A web-based, agentic-AI platform for small- and medium-sized businesses (SMBs) to identify assets, ingest OSINT and logs, score and prioritize risk, and automate security workflows mapped to NIST CSF 2.0.
+
 ## Team Roster & Roles
 
 - [@ben-blake](https://github.com/ben-blake) - Team Lead
@@ -9,39 +11,32 @@
 - [@mukunda5125](https://github.com/mukunda5125) - DevOps
 - [@srujanareddykunta](https://github.com/srujanareddykunta-cell) - Frontend
 
-## Quickstart
+---
 
-### Backend
+## Getting Started
 
-```bash
-# Install dependencies
-pip install fastapi uvicorn
+### Prerequisites
 
-# Start the development server
-uvicorn src.backend.app:app --reload --host 0.0.0.0 --port 8000
-```
+- Docker and Docker Compose
+- An `.env` file created from `env/.env.sample` (see `env/README.md`)
 
-The backend API will be available at http://localhost:8000
+### Running the Application (Docker)
 
-### Frontend
+1.  **Build and run all services:**
 
-```bash
-# Navigate to frontend directory
-cd src/frontend
+    ```bash
+    docker compose -f deploy/docker/docker-compose.yml up --build
+    ```
 
-# Install dependencies
-npm install
+2.  **Access the application:**
+    - Frontend UI: [http://localhost:5173](http://localhost:5173)
+    - Backend API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-# Start the development server
-npm run dev --port 5173
-```
+---
 
-The frontend application will be available at http://localhost:5173
+## Secret Management Policy
 
-- Health check page: http://localhost:5173/health
-
-## How to set environment variables
-
-- Create a `.env` file in the root directory
-- Copy the contents of `.env.example` into `.env`
-- Fill in the values
+- **Production & Staging Secrets**: Managed securely in the production VM environment. Access is restricted.
+- **Local Development Secrets**: Stored in `/env/.env`. This file **must not** be committed to Git. The `.gitignore` file is configured to prevent this.
+- **No Secrets in Code**: Under no circumstances should secrets (API keys, passwords, private certificates) be hard-coded. Always use environment variables referenced from the configuration files.
+- **Key Rotation**: API keys and other secrets should be rotated periodically and immediately if a leak is suspected.
