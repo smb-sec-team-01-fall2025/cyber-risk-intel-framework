@@ -1,20 +1,23 @@
 # Python
 __pycache__/
 *.pyc
-
-# Ignore all .env files
-.env*
-# But don't ignore .env.sample
-!.env.sample
+.env
+env/.env
 .venv/
+venv/
+*.egg-info/
+!.env.sample
 
 # Node
 node_modules/
 dist/
 build/
+.npm/
 
-# Project
+# Project-specific
 logs/
 data/private/
 *.sqlite
 .DS_Store
+.vscode/
+.idea/
