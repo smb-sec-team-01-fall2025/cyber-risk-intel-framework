@@ -1,96 +1,53 @@
 name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch: # Allow manual triggering
 
-# Avoid redundant workflow runs
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+on: [push, pull_request]
 
 jobs:
-  # Security scanning job - run first to catch issues early
-  security:
-    name: Security Scanning
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Scan for secrets
-        uses: trufflesecurity/trufflehog@v3.63.0
-        with:
-          path: .
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-
-  # Backend validation job
   backend:
-    name: Backend Validation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/backend
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: |
-            src/backend/requirements.txt
-            src/backend/requirements-dev.txt
-
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          # Generate a lock file with exact versions for audit
-          pip freeze > requirements-lock.txt
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r src/backend/requirements.txt
+          pip install ruff pytest
+      - name: Lint with ruff
+        run: |
+          source .venv/bin/activate
+          ruff check src/backend
+      - name: Test with pytest
+        run: |
+          source .venv/bin/activate
+          pytest src/backend/tests
 
-      - name: Security audit
-        run: pip-audit -r requirements-lock.txt || true
-
-      - name: Lint code
-        run: ruff check --output-format=github .
-
-      - name: Run tests
-        run: pytest -v || true
-
-  # Frontend validation job
   frontend:
-    name: Frontend Validation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/frontend
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: src/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm install --prefix src/frontend
+      - name: Lint with ESLint
+        run: npm run lint --prefix src/frontend
+      # Add tests here when they exist
+      # - name: Test with Vitest
+      #   run: npm run test --prefix src/frontend
 
-      - name: Install dependencies
-        run: npm ci || npm install
-
-      - name: Security audit
-        run: npm audit --audit-level=high || true
-
-      - name: Lint code
-        run: npm run lint || true
-
-      - name: Build project
-        run: npm run build || true
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
