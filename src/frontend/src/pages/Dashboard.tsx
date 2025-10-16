@@ -1,59 +1,121 @@
-import React from 'react';
 import { useEffect, useState } from 'react';
 
-interface Stats {
-  assets: number;
-  intel_events: number;
-  risk_items: number;
-}
+// A simple reusable card component
+const StatCard = ({
+  title,
+  value,
+}: {
+  title: string;
+  value: number | string;
+}) => (
+  <div className="card">
+    <h2>{title}</h2>
+    <p>{value}</p>
+  </div>
+);
+
+// Version information component
+const VersionInfo = ({ version }: { version: any }) => (
+  <div className="version-info">
+    <p>
+      Commit: <span>{version?.commit || 'N/A'}</span>
+    </p>
+    <p>
+      Built At:{' '}
+      <span>
+        {version?.built_at
+          ? new Date(parseInt(version.built_at) * 1000).toLocaleString()
+          : 'N/A'}
+      </span>
+    </p>
+  </div>
+);
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [stats, setStats] = useState<any>(null);
+  const [version, setVersion] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Force a change to break cache
-    console.log('Dashboard component mounted. Fetching stats...');
-    const apiBase = (import.meta as any).env?.VITE_API_BASE || '';
-    const statsUrl = `${apiBase}/api/stats`;
+    const fetchData = async () => {
+      try {
+        const [statsRes, versionRes] = await Promise.all([
+          fetch('/api/stats'),
+          fetch('/version'),
+        ]);
 
-    console.log('Fetching from URL:', statsUrl);
-
-    fetch(statsUrl)
-      .then((r) => {
-        if (!r.ok) {
-          throw new Error(`HTTP error! status: ${r.status}`);
+        if (!statsRes.ok || !versionRes.ok) {
+          throw new Error('Failed to fetch data');
         }
-        return r.json();
-      })
-      .then(setStats)
-      .catch((e) => {
-        console.error('Failed to fetch stats:', e);
-        setError(e.message);
-      });
+
+        const statsData = await statsRes.json();
+        const versionData = await versionRes.json();
+
+        setStats(statsData);
+        setVersion(versionData);
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, []);
 
-  if (error) {
-    return <div className="error">Failed to load dashboard stats: {error}</div>;
-  }
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div>Error: {error}</div>;
 
   return (
-    <div>
-      <h1>Security Dashboard (V2)</h1>
+    <div className="dashboard">
+      <header>
+        <h1>Security Dashboard</h1>
+        <VersionInfo version={version} />
+      </header>
       <div className="cards">
-        <div className="card">
-          <h2>Assets</h2>
-          <p>{stats?.assets ?? 'Loading...'}</p>
-        </div>
-        <div className="card">
-          <h2>Latest Intel Events</h2>
-          <p>{stats?.intel_events ?? 'Loading...'}</p>
-        </div>
-        <div className="card">
-          <h2>Risk Items</h2>
-          <p>{stats?.risk_items ?? 'Loading...'}</p>
-        </div>
+        <StatCard title="Assets" value={stats?.assets ?? 0} />
+        <StatCard title="Intel Events" value={stats?.intel_events ?? 0} />
+        <StatCard title="Risk Items" value={stats?.risk_items ?? 0} />
       </div>
+      <div className="dashboard-section">
+        <h2>Top 5 Risky Assets</h2>
+        <TopRiskyAssets />
+      </div>
+      {/* Health check can be moved to a footer or a separate status page */}
     </div>
+  );
+}
+
+function TopRiskyAssets() {
+  const [assets, setAssets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/assets/top?limit=5')
+      .then((r) => r.json())
+      .then(setAssets)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div>Loading risky assets...</div>;
+
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Risk Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {assets.map((asset) => (
+          <tr key={asset.id}>
+            <td>{asset.name}</td>
+            <td>{asset.risk.score}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

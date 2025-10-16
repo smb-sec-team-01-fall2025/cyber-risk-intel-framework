@@ -5,17 +5,11 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0', // Allow connections from outside the container
     proxy: {
-      // Proxy API requests to the backend server
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
-      // Also proxy the root health check
-      '/health': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
+      '/api': 'http://backend:8000',
+      '/version': 'http://backend:8000',
+      '/health': 'http://backend:8000',
     },
   },
 });
