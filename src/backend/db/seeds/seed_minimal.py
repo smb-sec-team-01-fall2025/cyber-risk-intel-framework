@@ -33,7 +33,7 @@ def seed_data():
         )
         session.add(sample_asset)
         session.commit()
-        print(f"Added 1 sample asset.")
+        print("Added 1 sample asset.")
 
         # Print final counts
         a = session.execute(select(func.count(Asset.id))).scalar_one()

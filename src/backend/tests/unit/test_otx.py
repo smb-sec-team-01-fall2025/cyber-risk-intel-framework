@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 
 def test_otx_client_mock_success(monkeypatch):

@@ -5,13 +5,6 @@ import enum
 class Base(DeclarativeBase):
     pass
 
-class AssetTypeEnum(str, enum.Enum):
-    HW = "HW"
-    SW = "SW"
-    DATA = "Data"
-    USER = "User"
-    SERVICE = "Service"
-
 class DataSensitivityEnum(str, enum.Enum):
     LOW = "Low"
     MODERATE = "Moderate"
@@ -21,7 +14,7 @@ class Asset(Base):
     __tablename__ = "assets"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), index=True, unique=True)
-    type: Mapped[AssetTypeEnum] = mapped_column(Enum(AssetTypeEnum), default=AssetTypeEnum.SERVICE)
+    type: Mapped[str] = mapped_column(String(50), default="Service")
     
     ip: Mapped[str] = mapped_column(String(45), nullable=True, index=True)
     hostname: Mapped[str] = mapped_column(String(255), nullable=True, index=True)

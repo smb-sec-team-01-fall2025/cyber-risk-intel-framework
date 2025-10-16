@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from db.models import Asset, IntelEvent, AssetIntelLink, MatchTypeEnum
 from db.session import get_session
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ class IdentifyAgent:
         self.db.commit()
         
         intel_events = self.db.scalars(select(IntelEvent)).all()
-        assets = self.db.scalars(select(Asset).where(Asset.ip != None)).all()
+        assets = self.db.scalars(select(Asset).where(Asset.ip.is_not(None))).all()
         
         # A bit inefficient, but fine for an MVP
         links_created = 0

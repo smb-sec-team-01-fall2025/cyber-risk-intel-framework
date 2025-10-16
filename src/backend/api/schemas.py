@@ -2,11 +2,11 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from ipaddress import ip_address
 from datetime import datetime
-from db.models import AssetTypeEnum, DataSensitivityEnum
+from db.models import DataSensitivityEnum
 
 class AssetBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    type: AssetTypeEnum
+    type: str
     ip: Optional[str] = None
     hostname: Optional[str] = None
     owner: Optional[str] = None
@@ -29,7 +29,7 @@ class AssetCreate(AssetBase):
 
 class AssetUpdate(AssetBase):
     name: Optional[str] = Field(None, min_length=1, max_length=120)
-    type: Optional[AssetTypeEnum] = None
+    type: Optional[str] = None
     criticality: Optional[int] = Field(None, ge=1, le=5)
     data_sensitivity: Optional[DataSensitivityEnum] = None
 

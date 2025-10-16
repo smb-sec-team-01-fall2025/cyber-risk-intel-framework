@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 import os
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool, create_engine
+from sqlalchemy import create_engine
+from db.models import Base
 
 from alembic import context
 
@@ -18,7 +18,6 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-from db.models import Base
 target_metadata = Base.metadata
 
 

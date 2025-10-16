@@ -22,6 +22,6 @@ def get_stats(session: Session = Depends(get_session)):
             "intel_events": event_count,
             "risk_items": risk_count,
         }
-    except Exception as e:
+    except Exception:
         # This can happen if the DB is not ready, return zeros
         return {"assets": 0, "intel_events": 0, "risk_items": 0}

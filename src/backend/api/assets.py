@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select
 from typing import List, Optional
-import json
 import csv
 from io import StringIO
 
 from db.session import get_session
-from db.models import Asset, AssetIntelLink, IntelEvent
+from db.models import Asset
 from .schemas import AssetCreate, AssetUpdate, AssetResponse
 from services.risk.scoring import calculate_asset_risk
 from agents.identify_agent import run_agent_full_scan
