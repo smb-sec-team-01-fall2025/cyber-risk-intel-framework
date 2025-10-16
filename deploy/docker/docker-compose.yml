@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   db:
     image: postgres:16
@@ -17,24 +15,34 @@ services:
 
   backend:
     build:
-      context: ../../
+      context: ../..
       dockerfile: deploy/docker/Dockerfile.backend
     env_file: ../../env/.env
     ports: ['8000:8000']
     depends_on:
       db:
         condition: service_healthy
+    # Set PYTHONPATH here as well to ensure commands like `exec` work correctly
+    environment:
+      - PYTHONPATH=.
     command: >
-      sh -c "alembic upgrade head && 
-             uvicorn src.backend.app:app --host 0.0.0.0 --port 8000"
+      sh -c "alembic upgrade head &&
+             uvicorn app:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:
+      # The context is now the project root, so the Dockerfile can access both frontend and nginx files
       context: ../../
       dockerfile: deploy/docker/Dockerfile.frontend
-    ports: ['5173:5173']
-    environment:
-      VITE_API_BASE: 'http://backend:8000'
+    ports: ['5173:80']
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   dbdata:
