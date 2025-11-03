@@ -1,0 +1,36 @@
+dist
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+.env
+env/.env
+.venv/
+venv/
+*.egg-info/
+!.env.sample
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.npm/
+
+# Project-specific
+logs/
+data/private/
+*.sqlite
+.DS_Store
+.vscode/
+.idea/
+.cursor/
+.local/
+attached_assets/
+.replit
+replit.md
+package-lock.json
+design_guidelines.md
