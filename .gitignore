@@ -28,9 +28,12 @@ data/private/
 .vscode/
 .idea/
 .cursor/
-.local/
-attached_assets/
+
+# Replit
 .replit
 replit.md
 package-lock.json
+attached_assets/
+.local/
+.config/
 design_guidelines.md
