@@ -4,16 +4,19 @@ import { db } from "./db";
 import { 
   assets, intelEvents, detections, incidents, controls, riskItems, 
   assetIntelLinks, incidentTasks, sops, policyAssignments,
+  drPlans, backupSets, restoreTests, resilienceFindings,
   insertAssetSchema, insertIntelEventSchema, insertDetectionSchema,
   insertIncidentSchema, insertControlSchema, insertRiskItemSchema,
+  insertBackupSetSchema, insertRestoreTestSchema, insertResilienceFindingSchema,
   type Asset, type IntelEvent, type Detection, type Incident,
-  type Control, type RiskItem
+  type Control, type RiskItem, type BackupSet, type RestoreTest
 } from "@shared/schema";
-import { eq, desc, sql, and, gte, lte, count } from "drizzle-orm";
+import { eq, desc, asc, sql, and, gte, lte, count } from "drizzle-orm";
 import OpenAI from "openai";
 import { osintOrchestrator } from "./osint-adapters";
 import { alertManager } from "./alert-system";
 import { scheduler } from "./scheduler";
+import { resilienceAgent } from "./resilience-agent";
 
 // This is using Replit's AI Integrations service, which provides OpenAI-compatible API access without requiring your own OpenAI API key.
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
@@ -35,20 +38,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const type = req.query.type as string;
       const search = req.query.search as string;
       
-      let query = db.select().from(assets);
+      // Build WHERE conditions for filtering
       const conditions = [];
-      
       if (type && type !== "all") conditions.push(eq(assets.type, type as any));
       if (search) {
         conditions.push(sql`${assets.name} ILIKE ${`%${search}%`} OR ${assets.hostname} ILIKE ${`%${search}%`}`);
       }
       
+      // Fetch assets with risk score calculation
+      let query = db
+        .select({
+          id: assets.id,
+          name: assets.name,
+          type: assets.type,
+          ip: assets.ip,
+          hostname: assets.hostname,
+          owner: assets.owner,
+          businessUnit: assets.businessUnit,
+          criticality: assets.criticality,
+          dataSensitivity: assets.dataSensitivity,
+          description: assets.description,
+          tags: assets.tags,
+          createdAt: assets.createdAt,
+          updatedAt: assets.updatedAt,
+          riskScore: sql<number>`COALESCE(SUM(${riskItems.score}), 0)`.as('riskScore'),
+        })
+        .from(assets)
+        .leftJoin(riskItems, eq(assets.id, riskItems.assetId))
+        .groupBy(assets.id);
+      
       if (conditions.length > 0) {
         query = query.where(and(...conditions)) as any;
       }
       
-      const allAssets = await query.orderBy(desc(assets.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
+      const allAssets = await query
+        .orderBy(desc(assets.createdAt))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
       
+      // Get total count for pagination
       let countQuery = db.select({ count: count() }).from(assets);
       if (conditions.length > 0) {
         countQuery = countQuery.where(and(...conditions)) as any;
@@ -130,9 +158,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/assets/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const [asset] = await db.select().from(assets).where(eq(assets.id, id));
       
-      if (!asset) {
+      // Fetch asset with risk score calculation
+      const [assetWithRisk] = await db
+        .select({
+          id: assets.id,
+          name: assets.name,
+          type: assets.type,
+          ip: assets.ip,
+          hostname: assets.hostname,
+          owner: assets.owner,
+          businessUnit: assets.businessUnit,
+          criticality: assets.criticality,
+          dataSensitivity: assets.dataSensitivity,
+          description: assets.description,
+          tags: assets.tags,
+          createdAt: assets.createdAt,
+          updatedAt: assets.updatedAt,
+          riskScore: sql<number>`COALESCE(SUM(${riskItems.score}), 0)`.as('riskScore'),
+        })
+        .from(assets)
+        .leftJoin(riskItems, eq(assets.id, riskItems.assetId))
+        .where(eq(assets.id, id))
+        .groupBy(assets.id);
+      
+      if (!assetWithRisk) {
         return res.status(404).json({ error: "Asset not found" });
       }
       
@@ -161,7 +211,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .innerJoin(controls, eq(policyAssignments.controlId, controls.id))
         .where(eq(policyAssignments.assetId, id));
       
-      res.json({ asset, linkedIntel, assignedControls });
+      res.json({ asset: assetWithRisk, linkedIntel, assignedControls });
     } catch (error) {
       console.error("Error fetching asset:", error);
       res.status(500).json({ error: "Failed to fetch asset" });
@@ -207,6 +257,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting asset:", error);
       res.status(500).json({ error: "Failed to delete asset" });
+    }
+  });
+  
+  app.get("/api/assets/:id/recover", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      // Find DR plan for this asset
+      const [drPlan] = await db
+        .select()
+        .from(drPlans)
+        .where(eq(drPlans.assetId, id))
+        .limit(1);
+      
+      // If no DR plan, return empty response
+      if (!drPlan) {
+        return res.json({
+          drPlan: null,
+          recentBackups: [],
+          recentRestoreTests: [],
+          openFindings: []
+        });
+      }
+      
+      // Fetch recent backups (last 10)
+      const recentBackups = await db
+        .select()
+        .from(backupSets)
+        .where(eq(backupSets.drPlanId, drPlan.id))
+        .orderBy(desc(backupSets.backupWindowEnd))
+        .limit(10);
+      
+      // Fetch recent restore tests (last 10)
+      const recentRestoreTests = await db
+        .select()
+        .from(restoreTests)
+        .where(eq(restoreTests.drPlanId, drPlan.id))
+        .orderBy(desc(restoreTests.testDate))
+        .limit(10);
+      
+      // Fetch open resilience findings
+      const openFindings = await db
+        .select()
+        .from(resilienceFindings)
+        .where(and(
+          eq(resilienceFindings.drPlanId, drPlan.id),
+          eq(resilienceFindings.status, 'open')
+        ))
+        .orderBy(desc(resilienceFindings.severity));
+      
+      // Express automatically serializes Date objects to ISO strings via JSON.stringify()
+      res.json({
+        drPlan,
+        recentBackups,
+        recentRestoreTests,
+        openFindings
+      });
+    } catch (error) {
+      console.error("Error fetching asset recover data:", error);
+      res.status(500).json({ error: "Failed to fetch recover data" });
     }
   });
   
@@ -472,10 +582,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/incidents/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      
+      const [existingIncident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!existingIncident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
       const updateData = { ...req.body, updatedAt: new Date() };
       
-      if (req.body.status === "Closed") {
-        updateData.closedAt = new Date();
+      if (req.body.status && req.body.status !== existingIncident.status) {
+        const statusTransitions: Record<string, string[]> = {
+          "Open": ["Triage", "Closed"],
+          "Triage": ["Containment", "Closed"],
+          "Containment": ["Eradication", "Closed"],
+          "Eradication": ["Recovery", "Closed"],
+          "Recovery": ["Closed"],
+          "Closed": [],
+        };
+        
+        const currentStatus = existingIncident.status || "Open";
+        const newStatus = req.body.status;
+        const allowedTransitions = statusTransitions[currentStatus] || [];
+        
+        if (!allowedTransitions.includes(newStatus)) {
+          return res.status(400).json({
+            error: `Invalid status transition from ${currentStatus} to ${newStatus}. Allowed transitions: ${allowedTransitions.join(", ") || "none"}`,
+          });
+        }
+        
+        if (newStatus === "Closed") {
+          updateData.closedAt = new Date();
+        }
+        
+        await db.insert(incidentTimeline).values({
+          incidentId: id,
+          timestamp: new Date(),
+          actor: req.body.updatedBy || "System",
+          eventType: "status_change",
+          detail: {
+            fromStatus: currentStatus,
+            toStatus: newStatus,
+            reason: req.body.statusChangeReason || null,
+          },
+        });
       }
       
       const [updated] = await db
@@ -484,14 +633,252 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(incidents.id, id))
         .returning();
       
-      if (!updated) {
-        return res.status(404).json({ error: "Incident not found" });
-      }
-      
       res.json(updated);
     } catch (error) {
       console.error("Error updating incident:", error);
       res.status(400).json({ error: "Failed to update incident" });
+    }
+  });
+
+  app.post("/api/incidents/:id/tasks", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      const taskData = {
+        ...req.body,
+        incidentId: id,
+      };
+      
+      const [created] = await db.insert(incidentTasks).values(taskData).returning();
+      res.status(201).json(created);
+    } catch (error) {
+      console.error("Error creating task:", error);
+      res.status(400).json({ error: "Failed to create task" });
+    }
+  });
+
+  app.patch("/api/incidents/:id/tasks/:taskId", async (req: Request, res: Response) => {
+    try {
+      const { id, taskId } = req.params;
+      
+      const [updated] = await db
+        .update(incidentTasks)
+        .set(req.body)
+        .where(and(
+          eq(incidentTasks.id, taskId),
+          eq(incidentTasks.incidentId, id)
+        ))
+        .returning();
+      
+      if (!updated) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating task:", error);
+      res.status(400).json({ error: "Failed to update task" });
+    }
+  });
+
+  app.get("/api/incidents/:id/timeline", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const timeline = await db
+        .select()
+        .from(incidentTimeline)
+        .where(eq(incidentTimeline.incidentId, id))
+        .orderBy(desc(incidentTimeline.timestamp));
+      
+      res.json(timeline);
+    } catch (error) {
+      console.error("Error fetching timeline:", error);
+      res.status(500).json({ error: "Failed to fetch timeline" });
+    }
+  });
+
+  app.post("/api/incidents/:id/comms", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { message, author } = req.body;
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      const [entry] = await db.insert(incidentTimeline).values({
+        incidentId: id,
+        timestamp: new Date(),
+        actor: author || "System",
+        eventType: "comms",
+        detail: { message },
+      }).returning();
+      
+      res.status(201).json(entry);
+    } catch (error) {
+      console.error("Error adding communication:", error);
+      res.status(400).json({ error: "Failed to add communication" });
+    }
+  });
+
+  app.post("/api/incidents/:id/evidence", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      const evidenceData = {
+        ...req.body,
+        incidentId: id,
+      };
+      
+      const [created] = await db.insert(incidentEvidence).values(evidenceData).returning();
+      
+      await db.insert(incidentTimeline).values({
+        incidentId: id,
+        timestamp: new Date(),
+        actor: req.body.submittedBy || "System",
+        eventType: "evidence",
+        detail: { 
+          evidenceId: created.id,
+          evidenceType: created.evidenceType,
+          location: created.location,
+        },
+      });
+      
+      res.status(201).json(created);
+    } catch (error) {
+      console.error("Error adding evidence:", error);
+      res.status(400).json({ error: "Failed to add evidence" });
+    }
+  });
+
+  app.get("/api/incidents/:id/export", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const format = req.query.format || "md";
+      
+      if (format !== "md") {
+        return res.status(400).json({ error: "Only markdown format is supported" });
+      }
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      const tasks = await db.select().from(incidentTasks).where(eq(incidentTasks.incidentId, id)).orderBy(incidentTasks.phase, incidentTasks.priority);
+      
+      const timeline = await db.select().from(incidentTimeline).where(eq(incidentTimeline.incidentId, id)).orderBy(asc(incidentTimeline.timestamp));
+      
+      const evidence = await db.select().from(incidentEvidence).where(eq(incidentEvidence.incidentId, id)).orderBy(incidentEvidence.collectedAt);
+      
+      const linkedDetections = await db
+        .select({
+          detection: detections,
+        })
+        .from(detectionIncidentLinks)
+        .innerJoin(detections, eq(detections.id, detectionIncidentLinks.detectionId))
+        .where(eq(detectionIncidentLinks.incidentId, id));
+      
+      let markdown = `# Incident Report: ${incident.incidentNumber || incident.id}\n\n`;
+      markdown += `**Title:** ${incident.title}\n`;
+      markdown += `**Severity:** ${incident.severity}\n`;
+      markdown += `**Status:** ${incident.status}\n`;
+      markdown += `**Owner:** ${incident.owner || "Unassigned"}\n`;
+      markdown += `**Opened:** ${incident.openedAt?.toISOString() || "N/A"}\n`;
+      markdown += `**Closed:** ${incident.closedAt?.toISOString() || "N/A"}\n`;
+      markdown += `**SLA Due:** ${incident.slaDueAt?.toISOString() || "N/A"}\n`;
+      markdown += `**SLA Breached:** ${incident.slaBreached ? "Yes" : "No"}\n\n`;
+      
+      markdown += `## Summary\n\n${incident.summary || "No summary provided."}\n\n`;
+      
+      if (incident.rootCause) {
+        markdown += `## Root Cause\n\n${incident.rootCause}\n\n`;
+      }
+      
+      if (incident.lessonsLearned) {
+        markdown += `## Lessons Learned\n\n${incident.lessonsLearned}\n\n`;
+      }
+      
+      if (linkedDetections.length > 0) {
+        markdown += `## Linked Detections (${linkedDetections.length})\n\n`;
+        for (const { detection } of linkedDetections) {
+          markdown += `- **${detection.source}** - ${detection.indicator} (Severity: ${detection.severity}, Confidence: ${detection.confidence}%)\n`;
+          if (detection.ttp && detection.ttp.length > 0) {
+            markdown += `  - TTPs: ${detection.ttp.join(", ")}\n`;
+          }
+          if (detection.analystNote) {
+            markdown += `  - Note: ${detection.analystNote}\n`;
+          }
+        }
+        markdown += `\n`;
+      }
+      
+      if (tasks.length > 0) {
+        markdown += `## Tasks (${tasks.length})\n\n`;
+        const tasksByPhase = tasks.reduce((acc, task) => {
+          if (!acc[task.phase]) acc[task.phase] = [];
+          acc[task.phase].push(task);
+          return acc;
+        }, {} as Record<string, typeof tasks>);
+        
+        for (const [phase, phaseTasks] of Object.entries(tasksByPhase)) {
+          markdown += `### ${phase}\n\n`;
+          for (const task of phaseTasks) {
+            const statusIcon = task.status === "Completed" ? "✅" : task.status === "In Progress" ? "🔄" : "⬜";
+            markdown += `${statusIcon} **${task.title}**\n`;
+            if (task.description) markdown += `   ${task.description}\n`;
+            markdown += `   - Owner: ${task.owner || "Unassigned"}\n`;
+            markdown += `   - Status: ${task.status}\n`;
+            if (task.dueDate) markdown += `   - Due: ${task.dueDate.toISOString()}\n`;
+            markdown += `\n`;
+          }
+        }
+      }
+      
+      if (timeline.length > 0) {
+        markdown += `## Timeline (${timeline.length} events)\n\n`;
+        for (const entry of timeline) {
+          markdown += `- **${entry.timestamp.toISOString()}** - ${entry.actor} - ${entry.eventType}\n`;
+          if (entry.detail) {
+            markdown += `  \`\`\`json\n  ${JSON.stringify(entry.detail, null, 2)}\n  \`\`\`\n`;
+          }
+        }
+        markdown += `\n`;
+      }
+      
+      if (evidence.length > 0) {
+        markdown += `## Evidence (${evidence.length} items)\n\n`;
+        for (const item of evidence) {
+          markdown += `### ${item.evidenceType}\n`;
+          markdown += `- **Location:** ${item.location}\n`;
+          markdown += `- **Collected:** ${item.collectedAt.toISOString()}\n`;
+          markdown += `- **Submitted by:** ${item.submittedBy || "Unknown"}\n`;
+          if (item.description) markdown += `- **Description:** ${item.description}\n`;
+          if (item.hash) markdown += `- **Hash:** ${item.hash}\n`;
+          markdown += `\n`;
+        }
+      }
+      
+      markdown += `---\n*Generated on ${new Date().toISOString()}*\n`;
+      
+      res.setHeader("Content-Type", "text/markdown");
+      res.setHeader("Content-Disposition", `attachment; filename="incident-${incident.incidentNumber || incident.id}.md"`);
+      res.send(markdown);
+    } catch (error) {
+      console.error("Error exporting incident:", error);
+      res.status(500).json({ error: "Failed to export incident" });
     }
   });
   
@@ -871,6 +1258,41 @@ Respond in JSON format:
     }
   });
   
+  // Respond Agent: Auto-Incident Creation from Detections
+  app.post("/api/respond/run", async (req: Request, res: Response) => {
+    try {
+      const { RespondAutomationService } = await import("./respond-automation");
+      const service = new RespondAutomationService();
+      
+      const criteria = {
+        detectionIds: req.body.detectionIds,
+        severityThreshold: req.body.severityThreshold,
+        confidenceThreshold: req.body.confidenceThreshold,
+        timeWindowHours: req.body.timeWindowHours,
+      };
+      
+      const result = await service.run(criteria);
+      
+      res.json({
+        success: true,
+        created: result.created.length,
+        linkedExisting: result.updatedLinks.length,
+        skipped: result.skipped.length,
+        incidents: result.created.map(c => ({
+          id: c.incident.id,
+          incidentNumber: c.incident.incidentNumber,
+          title: c.incident.title,
+          severity: c.incident.severity,
+          taskCount: c.tasks.length,
+        })),
+        skippedDetails: result.skipped,
+      });
+    } catch (error) {
+      console.error("Error in respond automation:", error);
+      res.status(500).json({ error: "Failed to run respond automation" });
+    }
+  });
+
   // Respond Agent: Incident Playbook Generation
   app.post("/api/respond/generate-playbook", async (req: Request, res: Response) => {
     try {
@@ -1075,6 +1497,177 @@ Respond in JSON format:
     } catch (error) {
       console.error("Error checking SLA:", error);
       res.status(500).json({ error: "Failed to check SLA" });
+    }
+  });
+  
+  app.post("/api/scheduler/trigger-rpo-rto-check", async (req: Request, res: Response) => {
+    try {
+      const result = await scheduler.checkRpoRtoNow();
+      res.json(result);
+    } catch (error) {
+      console.error("Error checking RPO/RTO:", error);
+      res.status(500).json({ error: "Failed to check RPO/RTO" });
+    }
+  });
+
+  // ============================================================================
+  // BACKUP & RESTORE API (Week 7 - Recover Function)
+  // ============================================================================
+  
+  app.post("/api/backups/report", async (req: Request, res: Response) => {
+    try {
+      const validationResult = insertBackupSetSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.issues 
+        });
+      }
+
+      const data = validationResult.data;
+
+      // Validate asset exists
+      const asset = await db.query.assets.findFirst({
+        where: eq(assets.id, data.assetId)
+      });
+      if (!asset) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Validate drPlan if provided
+      let drPlan = null;
+      if (data.drPlanId) {
+        drPlan = await db.query.drPlans.findFirst({
+          where: eq(drPlans.id, data.drPlanId)
+        });
+        if (!drPlan) {
+          return res.status(404).json({ error: "DR Plan not found" });
+        }
+      }
+
+      // Check RPO breach if drPlan and rpoMinutesObserved are provided
+      let rpoBreached = false;
+      if (drPlan && data.rpoMinutesObserved !== undefined && data.rpoMinutesObserved !== null) {
+        rpoBreached = data.rpoMinutesObserved > drPlan.rpoMinutes;
+        
+        // Update drPlan's cached RPO observation
+        await db.update(drPlans)
+          .set({ 
+            lastRpoMinutesObserved: data.rpoMinutesObserved,
+            updatedAt: new Date()
+          })
+          .where(eq(drPlans.id, data.drPlanId!));
+      }
+
+      // Create backup set record
+      const [backupSet] = await db.insert(backupSets)
+        .values({
+          ...data,
+          rpoBreached
+        })
+        .returning();
+
+      res.status(201).json(backupSet);
+    } catch (error) {
+      console.error("Error creating backup set:", error);
+      res.status(500).json({ error: "Failed to create backup set" });
+    }
+  });
+
+  app.post("/api/restores/test", async (req: Request, res: Response) => {
+    try {
+      const validationResult = insertRestoreTestSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.issues 
+        });
+      }
+
+      const data = validationResult.data;
+
+      // Validate asset exists
+      const asset = await db.query.assets.findFirst({
+        where: eq(assets.id, data.assetId)
+      });
+      if (!asset) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Validate backupSet exists
+      const backupSet = await db.query.backupSets.findFirst({
+        where: eq(backupSets.id, data.backupSetId)
+      });
+      if (!backupSet) {
+        return res.status(404).json({ error: "Backup set not found" });
+      }
+
+      // Validate drPlan if provided
+      let drPlan = null;
+      if (data.drPlanId) {
+        drPlan = await db.query.drPlans.findFirst({
+          where: eq(drPlans.id, data.drPlanId)
+        });
+        if (!drPlan) {
+          return res.status(404).json({ error: "DR Plan not found" });
+        }
+
+        // Update drPlan's cached RTO observation if restoreDurationMinutes provided
+        if (data.restoreDurationMinutes !== undefined && data.restoreDurationMinutes !== null) {
+          await db.update(drPlans)
+            .set({ 
+              lastRtoMinutesObserved: data.restoreDurationMinutes,
+              updatedAt: new Date()
+            })
+            .where(eq(drPlans.id, data.drPlanId));
+        }
+      }
+
+      // Create restore test record
+      const [restoreTest] = await db.insert(restoreTests)
+        .values(data)
+        .returning();
+
+      res.status(201).json(restoreTest);
+    } catch (error) {
+      console.error("Error creating restore test:", error);
+      res.status(500).json({ error: "Failed to create restore test" });
+    }
+  });
+
+  // ============================================================================
+  // RESILIENCE AGENT API (Week 7 - Recover Function)
+  // ============================================================================
+
+  app.post("/api/recover/run", async (req: Request, res: Response) => {
+    try {
+      const { assetId } = req.body;
+
+      // Validate asset if provided
+      if (assetId) {
+        const asset = await db.query.assets.findFirst({
+          where: eq(assets.id, assetId)
+        });
+        if (!asset) {
+          return res.status(404).json({ error: "Asset not found" });
+        }
+      }
+
+      const result = await resilienceAgent.runAnalysis(assetId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error running resilience analysis:", error);
+      res.status(500).json({ error: "Failed to run resilience analysis" });
+    }
+  });
+
+  app.get("/api/recover/summary", async (req: Request, res: Response) => {
+    try {
+      const summary = await resilienceAgent.getSummary();
+      res.json(summary);
+    } catch (error) {
+      console.error("Error getting recovery summary:", error);
+      res.status(500).json({ error: "Failed to get recovery summary" });
     }
   });
 

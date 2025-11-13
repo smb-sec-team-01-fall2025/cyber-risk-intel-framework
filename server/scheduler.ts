@@ -1,8 +1,8 @@
 import { db } from "./db";
-import { incidents } from "@shared/schema";
+import { incidents, drPlans, backupSets, restoreTests } from "@shared/schema";
 import { osintOrchestrator } from "./osint-adapters";
 import { alertManager } from "./alert-system";
-import { sql, and, eq, lte } from "drizzle-orm";
+import { sql, and, eq, lte, desc } from "drizzle-orm";
 
 // ============================================================================
 // SCHEDULER CONFIGURATION
@@ -11,8 +11,10 @@ import { sql, and, eq, lte } from "drizzle-orm";
 export interface SchedulerConfig {
   osintScanInterval?: number;
   slaCheckInterval?: number;
+  rpoRtoCheckInterval?: number;
   enableOsintScans?: boolean;
   enableSlaMonitoring?: boolean;
+  enableRpoRtoChecks?: boolean;
 }
 
 // ============================================================================
@@ -23,14 +25,17 @@ export class BackgroundScheduler {
   private config: SchedulerConfig;
   private osintIntervalId?: NodeJS.Timeout;
   private slaIntervalId?: NodeJS.Timeout;
+  private rpoRtoIntervalId?: NodeJS.Timeout;
   private isRunning = false;
   
   constructor(config?: SchedulerConfig) {
     this.config = {
       osintScanInterval: config?.osintScanInterval || 3600000, // 1 hour default
       slaCheckInterval: config?.slaCheckInterval || 300000, // 5 minutes default
+      rpoRtoCheckInterval: config?.rpoRtoCheckInterval || 86400000, // 24 hours default
       enableOsintScans: config?.enableOsintScans ?? true,
       enableSlaMonitoring: config?.enableSlaMonitoring ?? true,
+      enableRpoRtoChecks: config?.enableRpoRtoChecks ?? true,
     };
   }
   
@@ -49,6 +54,10 @@ export class BackgroundScheduler {
     
     if (this.config.enableSlaMonitoring) {
       this.startSlaMonitoring();
+    }
+    
+    if (this.config.enableRpoRtoChecks) {
+      this.startRpoRtoChecks();
     }
     
     console.log("[Scheduler] Background jobs started successfully");
@@ -70,6 +79,11 @@ export class BackgroundScheduler {
     if (this.slaIntervalId) {
       clearInterval(this.slaIntervalId);
       this.slaIntervalId = undefined;
+    }
+    
+    if (this.rpoRtoIntervalId) {
+      clearInterval(this.rpoRtoIntervalId);
+      this.rpoRtoIntervalId = undefined;
     }
     
     this.isRunning = false;
@@ -158,6 +172,105 @@ export class BackgroundScheduler {
     }
   }
   
+  private startRpoRtoChecks(): void {
+    console.log(`[Scheduler] Starting RPO/RTO checks every ${this.config.rpoRtoCheckInterval}ms`);
+    
+    this.checkRpoRtoCompliance();
+    
+    this.rpoRtoIntervalId = setInterval(() => {
+      this.checkRpoRtoCompliance();
+    }, this.config.rpoRtoCheckInterval);
+  }
+  
+  private async checkRpoRtoCompliance(): Promise<void> {
+    try {
+      const now = new Date();
+      const maxRestoreTestAgeMs = parseInt(process.env.MAX_RESTORE_TEST_AGE_DAYS || "90") * 24 * 60 * 60 * 1000;
+      
+      const allDrPlans = await db.select().from(drPlans);
+      
+      if (allDrPlans.length === 0) {
+        return;
+      }
+      
+      console.log(`[Scheduler] Evaluating RPO/RTO compliance for ${allDrPlans.length} DR plans`);
+      
+      let rpoViolations = 0;
+      let rtoViolations = 0;
+      
+      for (const plan of allDrPlans) {
+        try {
+          const [latestBackup] = await db
+            .select()
+            .from(backupSets)
+            .where(and(
+              eq(backupSets.drPlanId, plan.id),
+              eq(backupSets.status, 'success')
+            ))
+            .orderBy(desc(backupSets.backupWindowEnd))
+            .limit(1);
+          
+          const backupAgeMinutes = latestBackup && latestBackup.backupWindowEnd
+            ? Math.floor((now.getTime() - latestBackup.backupWindowEnd.getTime()) / (1000 * 60))
+            : null;
+          
+          const rpoCompliant = latestBackup && backupAgeMinutes !== null
+            ? backupAgeMinutes <= plan.rpoMinutes
+            : false;
+          
+          if (!rpoCompliant) {
+            rpoViolations++;
+          }
+          
+          const [latestPassingTest] = await db
+            .select()
+            .from(restoreTests)
+            .where(and(
+              eq(restoreTests.drPlanId, plan.id),
+              eq(restoreTests.status, 'passed')
+            ))
+            .orderBy(desc(restoreTests.startedAt))
+            .limit(1);
+          
+          const testAgeMs = latestPassingTest
+            ? now.getTime() - latestPassingTest.startedAt.getTime()
+            : null;
+          
+          const testTooOld = latestPassingTest && testAgeMs !== null && testAgeMs > maxRestoreTestAgeMs;
+          
+          const rtoCompliant = latestPassingTest && !testTooOld
+            ? (latestPassingTest.restoreDurationMinutes !== null && 
+               latestPassingTest.restoreDurationMinutes <= plan.rtoMinutes)
+            : false;
+          
+          if (!rtoCompliant) {
+            rtoViolations++;
+          }
+          
+          await db
+            .update(drPlans)
+            .set({
+              lastEvaluatedAt: now,
+              lastRpoMinutesObserved: backupAgeMinutes,
+              lastRtoMinutesObserved: latestPassingTest?.restoreDurationMinutes || null
+            })
+            .where(eq(drPlans.id, plan.id));
+          
+        } catch (error) {
+          console.error(`[Scheduler] Error evaluating DR plan ${plan.id}:`, error);
+        }
+      }
+      
+      console.log(
+        `[Scheduler] RPO/RTO evaluation complete: ${allDrPlans.length} plans checked, ` +
+        `${rpoViolations} RPO violations, ${rtoViolations} RTO violations`
+      );
+      
+    } catch (error) {
+      console.error("[Scheduler] Error checking RPO/RTO compliance:", error);
+    }
+  }
+  
   async runOsintScanNow(): Promise<any> {
     console.log("[Scheduler] Manual OSINT scan triggered");
     return await osintOrchestrator.runFullScan();
@@ -175,12 +288,34 @@ export class BackgroundScheduler {
     return result?.count || 0;
   }
   
+  async checkRpoRtoNow(): Promise<{ totalPlans: number; rpoViolations: number; rtoViolations: number }> {
+    console.log("[Scheduler] Manual RPO/RTO check triggered");
+    await this.checkRpoRtoCompliance();
+    
+    const allPlans = await db.select().from(drPlans);
+    
+    const rpoViolations = allPlans.filter(p => 
+      p.lastRpoMinutesObserved === null || p.lastRpoMinutesObserved > p.rpoMinutes
+    ).length;
+    
+    const rtoViolations = allPlans.filter(p => 
+      p.lastRtoMinutesObserved === null || p.lastRtoMinutesObserved > p.rtoMinutes
+    ).length;
+    
+    return {
+      totalPlans: allPlans.length,
+      rpoViolations,
+      rtoViolations
+    };
+  }
+  
   getStatus(): {
     isRunning: boolean;
     config: SchedulerConfig;
     jobs: {
       osintScans: { enabled: boolean; intervalMs: number };
       slaMonitoring: { enabled: boolean; intervalMs: number };
+      rpoRtoChecks: { enabled: boolean; intervalMs: number };
     };
   } {
     return {
@@ -195,6 +330,10 @@ export class BackgroundScheduler {
           enabled: this.config.enableSlaMonitoring || false,
           intervalMs: this.config.slaCheckInterval || 0,
         },
+        rpoRtoChecks: {
+          enabled: this.config.enableRpoRtoChecks || false,
+          intervalMs: this.config.rpoRtoCheckInterval || 0,
+        },
       },
     };
   }
@@ -207,6 +346,8 @@ export class BackgroundScheduler {
 export const scheduler = new BackgroundScheduler({
   osintScanInterval: parseInt(process.env.OSINT_SCAN_INTERVAL || "3600000"),
   slaCheckInterval: parseInt(process.env.SLA_CHECK_INTERVAL || "300000"),
+  rpoRtoCheckInterval: parseInt(process.env.RPO_RTO_CHECK_INTERVAL || "86400000"),
   enableOsintScans: process.env.ENABLE_OSINT_SCANS !== "false",
   enableSlaMonitoring: process.env.ENABLE_SLA_MONITORING !== "false",
+  enableRpoRtoChecks: process.env.ENABLE_RPO_RTO_CHECKS !== "false",
 });
