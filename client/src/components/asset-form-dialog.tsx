@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -77,17 +77,22 @@ export function AssetFormDialog({
     },
   });
 
-  const createMutation = useMutation({
+  const saveMutation = useMutation({
     mutationFn: async (data: AssetFormValues) => {
-      const response = await apiRequest("POST", "/api/assets", data);
+      const method = isEditing ? "PATCH" : "POST";
+      const url = isEditing ? `/api/assets/${asset.id}` : "/api/assets";
+      const response = await apiRequest(method, url, data);
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || "Failed to create asset");
+        throw new Error(error.error || `Failed to ${isEditing ? "update" : "create"} asset`);
       }
       return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      if (isEditing && asset?.id) {
+        queryClient.invalidateQueries({ queryKey: ["/api/assets", asset.id] });
+      }
       toast({
         title: "Success",
         description: `Asset ${isEditing ? "updated" : "created"} successfully`,
@@ -105,8 +110,36 @@ export function AssetFormDialog({
     },
   });
 
+  useEffect(() => {
+    if (asset) {
+      form.reset({
+        name: asset.name || "",
+        type: asset.type || "HW",
+        ip: asset.ip || "",
+        hostname: asset.hostname || "",
+        owner: asset.owner || "",
+        businessUnit: asset.businessUnit || "",
+        criticality: asset.criticality || 2,
+        dataSensitivity: asset.dataSensitivity || "Low",
+        description: asset.description || "",
+      });
+    } else {
+      form.reset({
+        name: "",
+        type: "HW",
+        ip: "",
+        hostname: "",
+        owner: "",
+        businessUnit: "",
+        criticality: 2,
+        dataSensitivity: "Low",
+        description: "",
+      });
+    }
+  }, [asset, form]);
+
   const onSubmit = (data: AssetFormValues) => {
-    createMutation.mutate(data);
+    saveMutation.mutate(data);
   };
 
   return (
@@ -332,10 +365,10 @@ export function AssetFormDialog({
               </Button>
               <Button
                 type="submit"
-                disabled={createMutation.isPending}
+                disabled={saveMutation.isPending}
                 data-testid="button-submit-asset"
               >
-                {createMutation.isPending && (
+                {saveMutation.isPending && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 )}
                 {isEditing ? "Update Asset" : "Create Asset"}

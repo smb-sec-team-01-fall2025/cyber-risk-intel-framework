@@ -12,10 +12,12 @@ import AssetsList from "@/pages/assets-list";
 import AssetDetail from "@/pages/asset-detail";
 import DetectionsList from "@/pages/detections-list";
 import IncidentsList from "@/pages/incidents-list";
+import IncidentDetail from "@/pages/incident-detail";
 import ControlsList from "@/pages/controls-list";
 import RiskRegister from "@/pages/risk-register";
 import Compliance from "@/pages/compliance";
 import IntelEvents from "@/pages/intel-events";
+import RecoverDashboard from "@/pages/recover-dashboard";
 
 function Router() {
   return (
@@ -24,6 +26,7 @@ function Router() {
       <Route path="/assets/:id" component={AssetDetail} />
       <Route path="/assets" component={AssetsList} />
       <Route path="/detections" component={DetectionsList} />
+      <Route path="/incidents/:id" component={IncidentDetail} />
       <Route path="/incidents" component={IncidentsList} />
       <Route path="/controls" component={ControlsList} />
       <Route path="/risk-register" component={RiskRegister} />
@@ -37,7 +40,7 @@ function Router() {
       <Route path="/osint-feeds" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">OSINT Feeds (Coming Soon)</h1></div>} />
       <Route path="/playbooks" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Playbooks (Coming Soon)</h1></div>} />
       <Route path="/evidence" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Evidence (Coming Soon)</h1></div>} />
-      <Route path="/backup-status" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Backup Status (Coming Soon)</h1></div>} />
+      <Route path="/backup-status" component={RecoverDashboard} />
       <Route path="/dr-plans" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">DR Plans (Coming Soon)</h1></div>} />
       <Route path="/reports" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Reports (Coming Soon)</h1></div>} />
       <Route path="/settings" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Settings (Coming Soon)</h1></div>} />
