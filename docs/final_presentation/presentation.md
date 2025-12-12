@@ -46,7 +46,7 @@
 
 ## Slide 3: OSINT Integration Architecture (Tina)
 
-> "Hi everyone, I'm Tinana, and I was responsible for our data ingestion and detection capabilities.
+> "Hi everyone, I'm Tina, and I was responsible for our data ingestion and detection capabilities.
 >
 > One of the core challenges in threat intelligence is that every data source has a different format, different rate limits, and different reliability characteristics. A malicious IP report from AbuseIPDB looks completely different from a Shodan scan result or a VirusTotal file analysis.
 >
