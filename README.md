@@ -2,6 +2,8 @@
 
 A web-based, agentic-AI platform for small- and medium-sized businesses (SMBs) to identify assets, ingest OSINT and logs, score and prioritize risk, and automate security workflows mapped to NIST CSF 2.0.
 
+Live Demo: [https://youtu.be/notH5ACUzBI](https://youtu.be/notH5ACUzBI)
+
 ## Team Roster & Roles
 
 - [@ben-blake](https://github.com/ben-blake) - Team Lead
