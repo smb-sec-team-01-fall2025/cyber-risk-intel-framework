@@ -212,25 +212,29 @@ export default function AssetDetail() {
       </div>
 
       {/* Risk Score Card */}
-      {asset.riskScore > 0 && (
-        <Card className="border-l-4 border-l-destructive" data-testid="card-risk-score">
+      {asset && (
+        <Card className={asset.riskScore > 0 ? "border-l-4 border-l-destructive" : ""} data-testid="card-risk-score">
           <CardContent className="p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-muted-foreground mb-1">Current Risk Score</p>
-                <p className="text-4xl font-bold text-destructive">{asset.riskScore}</p>
+                <p className={`text-4xl font-bold ${asset.riskScore > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  {asset.riskScore || 0}
+                </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Sum of all risk item scores (likelihood × impact)
+                  Asset criticality × maximum threat severity (last 7 days)
                 </p>
               </div>
-              <SeverityBadge
-                severity={
-                  asset.riskScore >= 20 ? 5 : 
-                  asset.riskScore >= 15 ? 4 : 
-                  asset.riskScore >= 10 ? 3 : 
-                  asset.riskScore >= 5 ? 2 : 1
-                }
-              />
+              {asset.riskScore > 0 && (
+                <SeverityBadge
+                  severity={
+                    asset.riskScore >= 20 ? 5 : 
+                    asset.riskScore >= 15 ? 4 : 
+                    asset.riskScore >= 10 ? 3 : 
+                    asset.riskScore >= 5 ? 2 : 1
+                  }
+                />
+              )}
             </div>
           </CardContent>
         </Card>

@@ -1,12 +1,22 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { 
   ArrowLeft, Shield, CheckSquare, Clock, FileText, Link2, AlertCircle,
-  ChevronRight, Download, CheckCircle, XCircle
+  ChevronRight, Download, CheckCircle, XCircle, Plus, Send, Trash2
 } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { StatusBadge } from "@/components/status-badge";
@@ -34,6 +44,11 @@ export default function IncidentDetail() {
   const incidentId = params?.id;
 
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [timelineNote, setTimelineNote] = useState("");
+  const [evidenceType, setEvidenceType] = useState("log");
+  const [evidenceDescription, setEvidenceDescription] = useState("");
+  const [evidenceLocation, setEvidenceLocation] = useState("");
 
   const { data, isLoading } = useQuery<{
     incident: any;
@@ -44,9 +59,15 @@ export default function IncidentDetail() {
     enabled: !!incidentId,
   });
 
+  const { data: timelineData } = useQuery<any[]>({
+    queryKey: ["/api/incidents", incidentId, "timeline"],
+    enabled: !!incidentId,
+  });
+
   const incident = data?.incident;
   const tasks = data?.tasks || [];
   const primaryAsset = data?.primaryAsset;
+  const timeline = timelineData || [];
 
   const advancePhaseMutation = useMutation({
     mutationFn: async (newStatus: string) => {
@@ -58,6 +79,7 @@ export default function IncidentDetail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/incidents", incidentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/incidents", incidentId, "timeline"] });
       queryClient.invalidateQueries({ queryKey: ["/api/incidents"] });
       toast({
         title: "Success",
@@ -101,6 +123,32 @@ export default function IncidentDetail() {
     },
   });
 
+  const deleteIncidentMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("DELETE", `/api/incidents/${incidentId}`);
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to delete incident");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incidents"] });
+      toast({
+        title: "Success",
+        description: "Incident deleted successfully",
+      });
+      setLocation("/incidents");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete incident",
+        variant: "destructive",
+      });
+    },
+  });
+
   const updateTaskMutation = useMutation({
     mutationFn: async ({ taskId, status }: { taskId: string; status: string }) => {
       const response = await apiRequest("PATCH", `/api/incidents/${incidentId}/tasks/${taskId}`, { status });
@@ -120,6 +168,62 @@ export default function IncidentDetail() {
       toast({
         title: "Error",
         description: "Failed to update task",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addTimelineEntryMutation = useMutation({
+    mutationFn: async (note: string) => {
+      const response = await apiRequest("POST", `/api/incidents/${incidentId}/timeline`, {
+        eventType: "note",
+        description: note,
+        actor: "analyst",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to add timeline entry");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incidents", incidentId, "timeline"] });
+      setTimelineNote("");
+      toast({
+        title: "Success",
+        description: "Timeline entry added",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to add timeline entry",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addEvidenceMutation = useMutation({
+    mutationFn: async (evidence: { evidenceType: string; description: string; location: string }) => {
+      const response = await apiRequest("POST", `/api/incidents/${incidentId}/evidence`, evidence);
+      if (!response.ok) {
+        throw new Error("Failed to add evidence");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incidents", incidentId, "timeline"] });
+      setEvidenceType("log");
+      setEvidenceDescription("");
+      setEvidenceLocation("");
+      toast({
+        title: "Success",
+        description: "Evidence added",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to add evidence",
         variant: "destructive",
       });
     },
@@ -155,7 +259,6 @@ export default function IncidentDetail() {
     );
   }
 
-  // Calculate SLA status
   const getSlaStatus = () => {
     if (incident.slaBreached) return { label: "Breached", variant: "destructive" as const };
     if (!incident.slaDueAt) return { label: "No SLA", variant: "outline" as const };
@@ -171,7 +274,6 @@ export default function IncidentDetail() {
 
   const slaStatus = getSlaStatus();
 
-  // Get next phase
   const getNextPhase = (currentStatus: string) => {
     const phases = ["Open", "Triage", "Containment", "Eradication", "Recovery", "Closed"];
     const currentIndex = phases.indexOf(currentStatus);
@@ -180,7 +282,6 @@ export default function IncidentDetail() {
 
   const nextPhase = getNextPhase(incident.status);
 
-  // Group tasks by phase
   const tasksByPhase = tasks.reduce((acc: any, task: any) => {
     if (!acc[task.phase]) {
       acc[task.phase] = [];
@@ -191,9 +292,20 @@ export default function IncidentDetail() {
 
   const phases = ["Triage", "Containment", "Eradication", "Recovery", "Close"];
 
+  const getEventIcon = (eventType: string) => {
+    switch (eventType) {
+      case "status_change": return <ChevronRight className="h-4 w-4 text-blue-500" />;
+      case "note": return <FileText className="h-4 w-4 text-green-500" />;
+      case "evidence": return <FileText className="h-4 w-4 text-purple-500" />;
+      case "task": return <CheckSquare className="h-4 w-4 text-orange-500" />;
+      default: return <Clock className="h-4 w-4 text-muted-foreground" />;
+    }
+  };
+
+  const evidenceItems = timeline.filter((entry: any) => entry.eventType === "evidence");
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-4 flex-1">
           <Button
@@ -256,10 +368,19 @@ export default function IncidentDetail() {
             <Download className="h-4 w-4 mr-2" />
             Export Report
           </Button>
+          {incident.status === "Closed" && (
+            <Button
+              variant="destructive"
+              onClick={() => setDeleteDialogOpen(true)}
+              data-testid="button-delete-incident"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Tabs */}
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
           <TabsTrigger value="overview" data-testid="tab-overview">
@@ -272,19 +393,14 @@ export default function IncidentDetail() {
           </TabsTrigger>
           <TabsTrigger value="timeline" data-testid="tab-timeline">
             <Clock className="h-4 w-4 mr-2" />
-            Timeline
+            Timeline ({timeline.length})
           </TabsTrigger>
           <TabsTrigger value="evidence" data-testid="tab-evidence">
             <FileText className="h-4 w-4 mr-2" />
-            Evidence
-          </TabsTrigger>
-          <TabsTrigger value="linked" data-testid="tab-linked">
-            <Link2 className="h-4 w-4 mr-2" />
-            Linked Items
+            Evidence ({evidenceItems.length})
           </TabsTrigger>
         </TabsList>
 
-        {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2">
             <Card>
@@ -337,9 +453,12 @@ export default function IncidentDetail() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Impact & Analysis</CardTitle>
+                <CardTitle className="text-lg">Description</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <p className="text-sm" data-testid="text-incident-description">
+                  {incident.description || "No description provided."}
+                </p>
                 {primaryAsset && (
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">Primary Asset</p>
@@ -350,18 +469,6 @@ export default function IncidentDetail() {
                     >
                       {primaryAsset.name}
                     </button>
-                  </div>
-                )}
-                {incident.rootCause && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Root Cause</p>
-                    <p className="text-sm">{incident.rootCause}</p>
-                  </div>
-                )}
-                {incident.lessonsLearned && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Lessons Learned</p>
-                    <p className="text-sm">{incident.lessonsLearned}</p>
                   </div>
                 )}
                 {incident.tags && incident.tags.length > 0 && (
@@ -381,7 +488,6 @@ export default function IncidentDetail() {
           </div>
         </TabsContent>
 
-        {/* Tasks Tab */}
         <TabsContent value="tasks" className="space-y-4">
           {phases.map((phase) => {
             const phaseTasks = tasksByPhase[phase] || [];
@@ -450,84 +556,206 @@ export default function IncidentDetail() {
                 <AlertCircle className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                 <p className="text-muted-foreground">No tasks found for this incident.</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Generate a playbook to create incident response tasks.
+                  Tasks are generated when the incident is created based on severity and type.
                 </p>
               </CardContent>
             </Card>
           )}
         </TabsContent>
 
-        {/* Timeline Tab */}
         <TabsContent value="timeline" className="space-y-4">
           <Card>
-            <CardContent className="p-12 text-center">
-              <Clock className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-muted-foreground">Timeline feature coming soon</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Track all incident events, status changes, and communications.
-              </p>
+            <CardHeader>
+              <CardTitle className="text-lg">Add Timeline Entry</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                <Textarea
+                  placeholder="Add a note about actions taken, observations, or updates..."
+                  value={timelineNote}
+                  onChange={(e) => setTimelineNote(e.target.value)}
+                  className="flex-1"
+                  data-testid="input-timeline-note"
+                />
+                <Button
+                  onClick={() => {
+                    if (timelineNote.trim()) {
+                      addTimelineEntryMutation.mutate(timelineNote.trim());
+                    }
+                  }}
+                  disabled={!timelineNote.trim() || addTimelineEntryMutation.isPending}
+                  data-testid="button-add-timeline"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Activity Timeline</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {timeline.length > 0 ? (
+                <div className="space-y-4">
+                  {timeline.map((entry: any, index: number) => (
+                    <div key={entry.id || index} className="flex gap-3" data-testid={`timeline-entry-${index}`}>
+                      <div className="flex-shrink-0 mt-1">
+                        {getEventIcon(entry.eventType)}
+                      </div>
+                      <div className="flex-1 border-l pl-4 pb-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {entry.eventType?.replace("_", " ") || "Event"}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {entry.timestamp && formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+                          </span>
+                          {entry.actor && (
+                            <span className="text-xs text-muted-foreground">by {entry.actor}</span>
+                          )}
+                        </div>
+                        <p className="text-sm">{entry.description || entry.detail?.description}</p>
+                        {entry.detail && typeof entry.detail === 'object' && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {entry.detail.from && entry.detail.to && (
+                              <span>Phase: {entry.detail.from} → {entry.detail.to}</span>
+                            )}
+                            {entry.detail.location && (
+                              <span className="block">Location: {entry.detail.location}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Clock className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <p className="text-muted-foreground">No timeline entries yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Add notes to track incident progress and actions taken
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Evidence Tab */}
         <TabsContent value="evidence" className="space-y-4">
           <Card>
-            <CardContent className="p-12 text-center">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-muted-foreground">Evidence management coming soon</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Upload and track evidence with chain-of-custody.
-              </p>
+            <CardHeader>
+              <CardTitle className="text-lg">Add Evidence</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="space-y-2">
+                  <Label htmlFor="evidence-type">Type</Label>
+                  <Select value={evidenceType} onValueChange={setEvidenceType}>
+                    <SelectTrigger id="evidence-type" data-testid="select-evidence-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="log">Log File</SelectItem>
+                      <SelectItem value="screenshot">Screenshot</SelectItem>
+                      <SelectItem value="pcap">Network Capture</SelectItem>
+                      <SelectItem value="config">Configuration</SelectItem>
+                      <SelectItem value="memory">Memory Dump</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="evidence-description">Description</Label>
+                  <Input
+                    id="evidence-description"
+                    placeholder="Brief description of the evidence"
+                    value={evidenceDescription}
+                    onChange={(e) => setEvidenceDescription(e.target.value)}
+                    data-testid="input-evidence-description"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="evidence-location">Location/Reference</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="evidence-location"
+                      placeholder="File path or URL"
+                      value={evidenceLocation}
+                      onChange={(e) => setEvidenceLocation(e.target.value)}
+                      data-testid="input-evidence-location"
+                    />
+                    <Button
+                      onClick={() => {
+                        if (evidenceDescription.trim()) {
+                          addEvidenceMutation.mutate({
+                            evidenceType,
+                            description: evidenceDescription.trim(),
+                            location: evidenceLocation.trim(),
+                          });
+                        }
+                      }}
+                      disabled={!evidenceDescription.trim() || addEvidenceMutation.isPending}
+                      data-testid="button-add-evidence"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Linked Items Tab */}
-        <TabsContent value="linked" className="space-y-4">
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Linked Detections</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {incident.detectionRefs && incident.detectionRefs.length > 0 ? (
-                  <div className="space-y-2">
-                    {incident.detectionRefs.map((detId: string) => (
-                      <div key={detId} className="text-sm p-2 border rounded">
-                        Detection: {detId.substring(0, 8)}...
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Evidence Chain</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {evidenceItems.length > 0 ? (
+                <div className="space-y-3">
+                  {evidenceItems.map((item: any, index: number) => (
+                    <div
+                      key={item.id || index}
+                      className="flex items-start gap-3 p-3 rounded-md border"
+                      data-testid={`evidence-item-${index}`}
+                    >
+                      <FileText className="h-5 w-5 text-purple-500 mt-0.5" />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {item.detail?.evidenceType || "evidence"}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {item.timestamp && format(new Date(item.timestamp), "PPp")}
+                          </span>
+                          {item.actor && (
+                            <span className="text-xs text-muted-foreground">by {item.actor}</span>
+                          )}
+                        </div>
+                        <p className="text-sm">{item.detail?.description || item.description}</p>
+                        {item.detail?.location && (
+                          <p className="text-xs text-muted-foreground mt-1">Location: {item.detail.location}</p>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No linked detections</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Linked Risk Items</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {incident.riskItemRefs && incident.riskItemRefs.length > 0 ? (
-                  <div className="space-y-2">
-                    {incident.riskItemRefs.map((riskId: string) => (
-                      <div key={riskId} className="text-sm p-2 border rounded">
-                        Risk: {riskId.substring(0, 8)}...
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No linked risk items</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <p className="text-muted-foreground">No evidence collected yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Add evidence to maintain chain-of-custody for the investigation
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Close Incident Dialog */}
       <AlertDialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -543,6 +771,27 @@ export default function IncidentDetail() {
               disabled={closeIncidentMutation.isPending}
             >
               Close Incident
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Incident?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the incident and all related tasks, timeline entries, and evidence. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteIncidentMutation.mutate()}
+              disabled={deleteIncidentMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Incident
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

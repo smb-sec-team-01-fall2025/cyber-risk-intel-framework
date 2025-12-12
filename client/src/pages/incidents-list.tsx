@@ -1,16 +1,32 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { DataTable } from "@/components/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, AlertTriangle, Plus } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { Search, AlertTriangle, Plus, Loader2 } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDistanceToNow } from "date-fns";
+import { insertIncidentSchema, type InsertIncident } from "@shared/schema";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { z } from "zod";
+
+const createIncidentSchema = insertIncidentSchema.pick({
+  title: true,
+  description: true,
+  severity: true,
+  assetId: true,
+});
 
 export default function IncidentsList() {
   const [, setLocation] = useLocation();
@@ -19,6 +35,8 @@ export default function IncidentsList() {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const pageSize = 25;
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const { toast } = useToast();
 
   const { data: incidentsData, isLoading } = useQuery({
     queryKey: ["/api/incidents", { search: searchTerm, status: statusFilter, severity: severityFilter, page, pageSize }],
@@ -26,6 +44,39 @@ export default function IncidentsList() {
 
   const incidents = incidentsData?.incidents || [];
   const total = incidentsData?.total || 0;
+
+  const createForm = useForm<z.infer<typeof createIncidentSchema>>({
+    resolver: zodResolver(createIncidentSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      severity: "P3",
+      assetId: null,
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof createIncidentSchema>) => {
+      const res = await apiRequest("POST", "/api/incidents", data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incidents"] });
+      setCreateDialogOpen(false);
+      createForm.reset();
+      toast({
+        title: "Incident created",
+        description: "The incident has been created successfully.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create incident. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const columns = [
     {
@@ -97,7 +148,7 @@ export default function IncidentsList() {
             Track and manage security incidents with automated playbooks
           </p>
         </div>
-        <Button data-testid="button-create-incident" onClick={() => setLocation("/incidents/new")}>
+        <Button data-testid="button-create-incident" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           New Incident
         </Button>
@@ -162,6 +213,85 @@ export default function IncidentsList() {
           onPageChange: setPage,
         }}
       />
+
+      {/* Create Incident Dialog */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent data-testid="dialog-create-incident">
+          <DialogHeader>
+            <DialogTitle>Create Incident</DialogTitle>
+            <DialogDescription>
+              Create a new security incident to track and manage.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...createForm}>
+            <form onSubmit={createForm.handleSubmit((data) => createMutation.mutate(data))} className="space-y-4" data-testid="form-create-incident">
+              <FormField
+                control={createForm.control}
+                name="title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Title</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Incident title" {...field} data-testid="input-incident-title" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Describe the incident..."
+                        {...field}
+                        value={field.value || ""}
+                        data-testid="input-incident-description"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={createForm.control}
+                name="severity"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Severity</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-incident-severity">
+                          <SelectValue placeholder="Select severity" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="P1">P1 - Critical</SelectItem>
+                        <SelectItem value="P2">P2 - High</SelectItem>
+                        <SelectItem value="P3">P3 - Medium</SelectItem>
+                        <SelectItem value="P4">P4 - Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setCreateDialogOpen(false)} data-testid="button-cancel-incident">
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-incident">
+                  {createMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create Incident
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Activity, RefreshCw } from "lucide-react";
 import { SeverityBadge } from "@/components/severity-badge";
 import { formatDistanceToNow } from "date-fns";
@@ -17,8 +18,14 @@ export default function IntelEvents() {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const pageSize = 25;
+  const [selectedEvent, setSelectedEvent] = useState<any>(null);
 
-  const { data: intelData, isLoading } = useQuery({
+  const { data: intelData, isLoading } = useQuery<{
+    events: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>({
     queryKey: ["/api/intel-events", { search: searchTerm, source: sourceFilter, page, pageSize }],
   });
 
@@ -46,7 +53,12 @@ export default function IntelEvents() {
     {
       key: "severity",
       header: "Severity",
-      render: (value: number) => <SeverityBadge severity={value} />,
+      render: (value: number) => (
+        <div className="flex items-center gap-2">
+          <SeverityBadge severity={value as 1 | 2 | 3 | 4 | 5} />
+          <span className="text-xs text-muted-foreground font-mono">{value}/5</span>
+        </div>
+      ),
     },
     {
       key: "linkedAssets",
@@ -60,33 +72,6 @@ export default function IntelEvents() {
           <span className="text-muted-foreground text-sm">Not linked</span>
         )
       ),
-    },
-    {
-      key: "raw",
-      header: "Details",
-      render: (value: any) => {
-        const tags = value?.tags || [];
-        const country = value?.country;
-        return (
-          <div className="flex items-center gap-1">
-            {country && (
-              <Badge variant="outline" className="text-xs">
-                {country}
-              </Badge>
-            )}
-            {tags.slice(0, 2).map((tag: string, idx: number) => (
-              <Badge key={idx} variant="secondary" className="text-xs">
-                {tag}
-              </Badge>
-            ))}
-            {tags.length > 2 && (
-              <span className="text-xs text-muted-foreground">
-                +{tags.length - 2}
-              </span>
-            )}
-          </div>
-        );
-      },
     },
     {
       key: "createdAt",
@@ -153,6 +138,7 @@ export default function IntelEvents() {
         columns={columns}
         data={events}
         isLoading={isLoading}
+        onRowClick={(row) => setSelectedEvent(row)}
         emptyMessage="No intel events found. Configure OSINT feeds to start collecting intelligence."
         emptyIcon={<Activity className="h-16 w-16 mx-auto opacity-50 text-muted-foreground" />}
         pagination={{
@@ -162,6 +148,50 @@ export default function IntelEvents() {
           onPageChange: setPage,
         }}
       />
+
+      {/* Event Detail Dialog */}
+      <Dialog open={!!selectedEvent} onOpenChange={() => setSelectedEvent(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Intel Event Details</DialogTitle>
+            <DialogDescription>
+              Detailed information about this threat intelligence event
+            </DialogDescription>
+          </DialogHeader>
+          {selectedEvent && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Indicator</label>
+                <p className="font-mono text-sm mt-1">{selectedEvent.indicator}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Source</label>
+                  <div className="text-sm mt-1"><Badge variant="outline">{selectedEvent.source}</Badge></div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Severity</label>
+                  <div className="text-sm mt-1"><SeverityBadge severity={selectedEvent.severity} /></div>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Description</label>
+                <p className="text-sm mt-1">{selectedEvent.description || "No description available"}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Raw Data</label>
+                <pre className="text-xs bg-muted p-3 rounded-md mt-1 overflow-x-auto max-h-64">
+                  {JSON.stringify(selectedEvent.raw, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Discovered</label>
+                <p className="text-sm mt-1">{formatDistanceToNow(new Date(selectedEvent.createdAt), { addSuffix: true })}</p>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

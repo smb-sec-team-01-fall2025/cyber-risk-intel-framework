@@ -2,13 +2,12 @@ import {
   Shield,
   LayoutDashboard,
   Search,
-  Eye,
   AlertTriangle,
-  FileText,
   Activity,
   Archive,
   CheckCircle,
-  Settings,
+  ClipboardList,
+  Gavel,
 } from "lucide-react";
 import {
   Sidebar,
@@ -20,7 +19,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
-  SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Link, useLocation } from "wouter";
 
@@ -39,9 +37,9 @@ const navigationItems = [
         icon: Search,
       },
       {
-        title: "Asset Discovery",
-        url: "/asset-discovery",
-        icon: Activity,
+        title: "Risk Register",
+        url: "/risk-register",
+        icon: AlertTriangle,
       },
     ],
   },
@@ -53,35 +51,15 @@ const navigationItems = [
         url: "/controls",
         icon: Shield,
       },
-      {
-        title: "Policies",
-        url: "/policies",
-        icon: FileText,
-      },
-      {
-        title: "Coverage",
-        url: "/coverage",
-        icon: CheckCircle,
-      },
     ],
   },
   {
     title: "Detect",
     items: [
       {
-        title: "Detections",
-        url: "/detections",
-        icon: Eye,
-      },
-      {
         title: "Intel Events",
         url: "/intel-events",
         icon: Activity,
-      },
-      {
-        title: "OSINT Feeds",
-        url: "/osint-feeds",
-        icon: Search,
       },
     ],
   },
@@ -93,30 +71,15 @@ const navigationItems = [
         url: "/incidents",
         icon: AlertTriangle,
       },
-      {
-        title: "Playbooks",
-        url: "/playbooks",
-        icon: FileText,
-      },
-      {
-        title: "Evidence",
-        url: "/evidence",
-        icon: Archive,
-      },
     ],
   },
   {
     title: "Recover",
     items: [
       {
-        title: "Backup Status",
+        title: "Resilience Dashboard",
         url: "/backup-status",
         icon: Archive,
-      },
-      {
-        title: "DR Plans",
-        url: "/dr-plans",
-        icon: FileText,
       },
     ],
   },
@@ -124,19 +87,19 @@ const navigationItems = [
     title: "Govern",
     items: [
       {
-        title: "Risk Register",
-        url: "/risk-register",
-        icon: AlertTriangle,
+        title: "Governance Dashboard",
+        url: "/governance",
+        icon: Gavel,
       },
       {
-        title: "Compliance",
-        url: "/compliance",
+        title: "Compliance Matrix",
+        url: "/compliance-matrix",
         icon: CheckCircle,
       },
       {
-        title: "Reports",
-        url: "/reports",
-        icon: FileText,
+        title: "POA&M Board",
+        url: "/poam",
+        icon: ClipboardList,
       },
     ],
   },
@@ -154,7 +117,7 @@ export function AppSidebar() {
           </div>
           <div>
             <h2 className="text-lg font-semibold">SMB Security</h2>
-            <p className="text-xs text-muted-foreground">NIST CSF Platform</p>
+            <p className="text-xs text-muted-foreground">NIST CSF 2.0</p>
           </div>
         </div>
       </SidebarHeader>
@@ -206,18 +169,6 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <SidebarFooter className="p-4">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild data-testid="nav-settings">
-              <Link href="/settings">
-                <Settings className="h-4 w-4" />
-                <span>Settings</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </Sidebar>
   );
 }

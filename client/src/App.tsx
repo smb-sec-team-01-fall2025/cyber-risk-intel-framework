@@ -14,10 +14,16 @@ import DetectionsList from "@/pages/detections-list";
 import IncidentsList from "@/pages/incidents-list";
 import IncidentDetail from "@/pages/incident-detail";
 import ControlsList from "@/pages/controls-list";
+import ControlDetail from "@/pages/control-detail";
 import RiskRegister from "@/pages/risk-register";
+import RiskDetail from "@/pages/risk-detail";
 import Compliance from "@/pages/compliance";
 import IntelEvents from "@/pages/intel-events";
 import RecoverDashboard from "@/pages/recover-dashboard";
+import GovernanceDashboard from "@/pages/governance-dashboard";
+import ComplianceMatrix from "@/pages/compliance-matrix";
+import PoamBoard from "@/pages/poam-board";
+import MetricsTrends from "@/pages/metrics-trends";
 
 function Router() {
   return (
@@ -28,22 +34,21 @@ function Router() {
       <Route path="/detections" component={DetectionsList} />
       <Route path="/incidents/:id" component={IncidentDetail} />
       <Route path="/incidents" component={IncidentsList} />
+      <Route path="/controls/:id" component={ControlDetail} />
       <Route path="/controls" component={ControlsList} />
+      <Route path="/risks/:id" component={RiskDetail} />
       <Route path="/risk-register" component={RiskRegister} />
       <Route path="/compliance" component={Compliance} />
       <Route path="/intel-events" component={IntelEvents} />
       
-      {/* Placeholder routes - basic UI ready for backend */}
-      <Route path="/asset-discovery" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Asset Discovery (Coming Soon)</h1></div>} />
-      <Route path="/policies" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Policies (Coming Soon)</h1></div>} />
-      <Route path="/coverage" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Coverage (Coming Soon)</h1></div>} />
-      <Route path="/osint-feeds" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">OSINT Feeds (Coming Soon)</h1></div>} />
-      <Route path="/playbooks" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Playbooks (Coming Soon)</h1></div>} />
-      <Route path="/evidence" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Evidence (Coming Soon)</h1></div>} />
+      {/* Week 8: Govern Function */}
+      <Route path="/governance" component={GovernanceDashboard} />
+      <Route path="/compliance-matrix" component={ComplianceMatrix} />
+      <Route path="/poam" component={PoamBoard} />
+      <Route path="/metrics-trends" component={MetricsTrends} />
+      
+      {/* Recover Function */}
       <Route path="/backup-status" component={RecoverDashboard} />
-      <Route path="/dr-plans" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">DR Plans (Coming Soon)</h1></div>} />
-      <Route path="/reports" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Reports (Coming Soon)</h1></div>} />
-      <Route path="/settings" component={() => <div className="p-8"><h1 className="text-2xl font-semibold">Settings (Coming Soon)</h1></div>} />
       <Route component={NotFound} />
     </Switch>
   );
