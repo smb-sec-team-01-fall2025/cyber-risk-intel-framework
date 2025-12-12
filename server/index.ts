@@ -2,6 +2,14 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { scheduler } from "./scheduler";
+import { 
+  securityHeaders, 
+  corsMiddleware, 
+  requestIdMiddleware, 
+  rateLimiter,
+  healthEndpoints 
+} from "./middleware/security";
+import { structuredLogger } from "./middleware/logger";
 
 const app = express();
 
@@ -10,12 +18,27 @@ declare module 'http' {
     rawBody: unknown
   }
 }
+
+healthEndpoints(app);
+
+app.use(requestIdMiddleware);
+app.use(securityHeaders);
+app.use(corsMiddleware);
+
+app.use("/api", rateLimiter({ 
+  windowMs: 60000, 
+  maxRequests: 100 
+}));
+
 app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;
-  }
+  },
+  limit: "2mb"
 }));
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "2mb" }));
+
+app.use(structuredLogger);
 
 app.use((req, res, next) => {
   const start = Date.now();

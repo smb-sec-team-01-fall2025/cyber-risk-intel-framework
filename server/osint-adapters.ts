@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { intelEvents, assets, assetIntelLinks } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
+import { intelAnalyzer } from "./intel-analyzer";
 
 // Retry configuration
 const MAX_RETRIES = 3;
@@ -12,6 +13,42 @@ interface OsintResult {
   indicator: string;
   severity: number;
   raw: any;
+}
+
+// ============================================================================
+// IP VALIDATION UTILITY
+// ============================================================================
+
+function isPublicIP(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  
+  if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
+    return false;
+  }
+  
+  const [a, b, c, d] = parts;
+  
+  // Private IP ranges
+  if (a === 10) return false; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12
+  if (a === 192 && b === 168) return false; // 192.168.0.0/16
+  
+  // Loopback
+  if (a === 127) return false; // 127.0.0.0/8
+  
+  // Link-local
+  if (a === 169 && b === 254) return false; // 169.254.0.0/16
+  
+  // Reserved/Special
+  if (a === 0) return false; // 0.0.0.0/8
+  if (a >= 224) return false; // 224.0.0.0/4 (multicast) and 240.0.0.0/4 (reserved)
+  
+  // Documentation/TEST-NET ranges (RFC 5737)
+  if (a === 192 && b === 0 && c === 2) return false; // 192.0.2.0/24 (TEST-NET-1)
+  if (a === 198 && b === 51 && c === 100) return false; // 198.51.100.0/24 (TEST-NET-2)
+  if (a === 203 && b === 0 && c === 113) return false; // 203.0.113.0/24 (TEST-NET-3)
+  
+  return true;
 }
 
 // ============================================================================
@@ -100,9 +137,16 @@ export class OtxAdapter {
     const allAssets = await db.select().from(assets).where(sql`${assets.ip} IS NOT NULL`);
     
     const results: OsintResult[] = [];
+    let skippedPrivate = 0;
     
     for (const asset of allAssets) {
       if (!asset.ip) continue;
+      
+      // OTX only works with public IPs
+      if (!isPublicIP(asset.ip)) {
+        skippedPrivate++;
+        continue;
+      }
       
       try {
         const result = await this.queryIndicator(asset.ip);
@@ -112,6 +156,10 @@ export class OtxAdapter {
       } catch (error) {
         console.error(`[OTX] Error scanning ${asset.ip}:`, error);
       }
+    }
+    
+    if (skippedPrivate > 0) {
+      console.log(`[OTX] Skipped ${skippedPrivate} private/reserved IPs (OTX only scans public IPs)`);
     }
     
     return results;
@@ -170,9 +218,16 @@ export class ShodanAdapter {
     const allAssets = await db.select().from(assets).where(sql`${assets.ip} IS NOT NULL`);
     
     const results: OsintResult[] = [];
+    let skippedPrivate = 0;
     
     for (const asset of allAssets) {
       if (!asset.ip) continue;
+      
+      // Shodan only works with public IPs
+      if (!isPublicIP(asset.ip)) {
+        skippedPrivate++;
+        continue;
+      }
       
       try {
         const result = await this.queryHost(asset.ip);
@@ -184,6 +239,10 @@ export class ShodanAdapter {
       } catch (error) {
         console.error(`[Shodan] Error scanning ${asset.ip}:`, error);
       }
+    }
+    
+    if (skippedPrivate > 0) {
+      console.log(`[Shodan] Skipped ${skippedPrivate} private/reserved IPs (Shodan only scans public IPs)`);
     }
     
     return results;
@@ -318,12 +377,24 @@ export class OsintOrchestrator {
     
     for (const result of allResults) {
       try {
+        // Use AI to analyze raw intel data and generate severity + description
+        const analysis = await intelAnalyzer.analyzeIntelEvent(
+          result.source,
+          result.indicator,
+          result.raw
+        );
+        
+        console.log(
+          `[OSINT] AI Analysis for ${result.indicator}: Severity ${analysis.severity}/5 - ${analysis.description.slice(0, 60)}...`
+        );
+        
         const [intelEvent] = await db
           .insert(intelEvents)
           .values({
             source: result.source as any,
             indicator: result.indicator,
-            severity: result.severity,
+            severity: analysis.severity, // AI-generated severity
+            description: analysis.description, // AI-generated description
             raw: result.raw,
           })
           .onConflictDoNothing()

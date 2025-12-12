@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { db } from "./db";
 import { 
   assets, intelEvents, detections, incidents, controls, riskItems, 
-  assetIntelLinks, incidentTasks, sops, policyAssignments,
+  assetIntelLinks, incidentTasks, incidentTimeline, incidentEvidence, sops, policyAssignments,
   drPlans, backupSets, restoreTests, resilienceFindings,
   insertAssetSchema, insertIntelEventSchema, insertDetectionSchema,
   insertIncidentSchema, insertControlSchema, insertRiskItemSchema,
@@ -17,6 +17,11 @@ import { osintOrchestrator } from "./osint-adapters";
 import { alertManager } from "./alert-system";
 import { scheduler } from "./scheduler";
 import { resilienceAgent } from "./resilience-agent";
+import { riskScorer } from "./risk-scorer";
+import { runGovernAgent, getGovernSummary, generateExecutiveReport } from "./govern-agent";
+import { complianceAssertions, poamItems, governMetricsSnapshots, evidenceCatalog,
+  insertComplianceAssertionSchema, insertPoamItemSchema, insertEvidenceCatalogSchema
+} from "@shared/schema";
 
 // This is using Replit's AI Integrations service, which provides OpenAI-compatible API access without requiring your own OpenAI API key.
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
@@ -45,7 +50,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         conditions.push(sql`${assets.name} ILIKE ${`%${search}%`} OR ${assets.hostname} ILIKE ${`%${search}%`}`);
       }
       
-      // Fetch assets with risk score calculation
+      // Fetch assets with risk score from the assets table
       let query = db
         .select({
           id: assets.id,
@@ -61,11 +66,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tags: assets.tags,
           createdAt: assets.createdAt,
           updatedAt: assets.updatedAt,
-          riskScore: sql<number>`COALESCE(SUM(${riskItems.score}), 0)`.as('riskScore'),
+          riskScore: assets.riskScore,
         })
-        .from(assets)
-        .leftJoin(riskItems, eq(assets.id, riskItems.assetId))
-        .groupBy(assets.id);
+        .from(assets);
       
       if (conditions.length > 0) {
         query = query.where(and(...conditions)) as any;
@@ -99,12 +102,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: assets.name,
           type: assets.type,
           criticality: assets.criticality,
-          riskScore: sql<number>`COALESCE(SUM(${riskItems.score}), 0)`,
+          riskScore: assets.riskScore,
         })
         .from(assets)
-        .leftJoin(riskItems, eq(assets.id, riskItems.assetId))
-        .groupBy(assets.id)
-        .orderBy(desc(sql`COALESCE(SUM(${riskItems.score}), 0)`))
+        .orderBy(desc(assets.riskScore))
         .limit(5);
       
       res.json(topAssets);
@@ -159,7 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
-      // Fetch asset with risk score calculation
+      // Fetch asset with risk score from the assets table
       const [assetWithRisk] = await db
         .select({
           id: assets.id,
@@ -175,12 +176,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tags: assets.tags,
           createdAt: assets.createdAt,
           updatedAt: assets.updatedAt,
-          riskScore: sql<number>`COALESCE(SUM(${riskItems.score}), 0)`.as('riskScore'),
+          riskScore: assets.riskScore,
         })
         .from(assets)
-        .leftJoin(riskItems, eq(assets.id, riskItems.assetId))
-        .where(eq(assets.id, id))
-        .groupBy(assets.id);
+        .where(eq(assets.id, id));
       
       if (!assetWithRisk) {
         return res.status(404).json({ error: "Asset not found" });
@@ -572,10 +571,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
         slaDueAt,
       }).returning();
       
+      // Generate AI tasks for the incident
+      try {
+        const prompt = `You are an incident response expert. Generate an IR playbook for:
+
+Incident Type: ${validatedData.title}
+Severity: ${validatedData.severity}
+Description: ${validatedData.description || "Security incident requiring response"}
+
+Generate a phased incident response playbook with tasks for each phase:
+- Triage
+- Containment
+- Eradication
+- Recovery
+- Close
+
+Each task should have:
+1. Phase
+2. Title
+3. Assignee role (e.g., "SOC Analyst", "CISO")
+4. Order (sequence number)
+
+Respond in JSON format:
+{
+  "tasks": [
+    {
+      "phase": "<Triage|Containment|Eradication|Recovery|Close>",
+      "title": "<task title>",
+      "assignee": "<role>",
+      "order": <number>
+    }
+  ]
+}`;
+        
+        const completion = await openai.chat.completions.create({
+          model: "gpt-5",
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 4096,
+        });
+        
+        const result = JSON.parse(completion.choices[0].message.content || "{}");
+        const generatedTasks = result.tasks || [];
+        
+        for (const task of generatedTasks) {
+          await db.insert(incidentTasks).values({
+            incidentId: newIncident.id,
+            phase: task.phase,
+            title: task.title,
+            assignee: task.assignee,
+            status: "Open",
+            order: task.order,
+          });
+        }
+        
+        console.log(`[Incidents] Generated ${generatedTasks.length} AI tasks for ${incidentNumber}`);
+      } catch (aiError) {
+        console.error("[Incidents] Failed to generate AI tasks:", aiError);
+        // Continue - incident created successfully, tasks are optional
+      }
+      
       res.status(201).json(newIncident);
     } catch (error) {
       console.error("Error creating incident:", error);
       res.status(400).json({ error: "Failed to create incident" });
+    }
+  });
+  
+  // Delete closed incident
+  app.delete("/api/incidents/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      if (incident.status !== "Closed") {
+        return res.status(400).json({ error: "Only closed incidents can be deleted" });
+      }
+      
+      // Delete related records first
+      await db.delete(incidentTasks).where(eq(incidentTasks.incidentId, id));
+      await db.delete(incidentTimeline).where(eq(incidentTimeline.incidentId, id));
+      await db.delete(incidentEvidence).where(eq(incidentEvidence.incidentId, id));
+      
+      // Delete the incident
+      await db.delete(incidents).where(eq(incidents.id, id));
+      
+      console.log(`[Incidents] Deleted closed incident ${incident.incidentNumber}`);
+      res.json({ success: true, message: `Incident ${incident.incidentNumber} deleted` });
+    } catch (error) {
+      console.error("Error deleting incident:", error);
+      res.status(500).json({ error: "Failed to delete incident" });
     }
   });
   
@@ -703,6 +792,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/incidents/:id/timeline", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { eventType, description, actor } = req.body;
+      
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+      if (!incident) {
+        return res.status(404).json({ error: "Incident not found" });
+      }
+      
+      const [entry] = await db.insert(incidentTimeline).values({
+        incidentId: id,
+        timestamp: new Date(),
+        actor: actor || "analyst",
+        eventType: eventType || "note",
+        detail: { description },
+      }).returning();
+      
+      res.status(201).json({ ...entry, description });
+    } catch (error) {
+      console.error("Error adding timeline entry:", error);
+      res.status(400).json({ error: "Failed to add timeline entry" });
+    }
+  });
+
   app.post("/api/incidents/:id/comms", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -731,6 +845,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/incidents/:id/evidence", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const { evidenceType, description, location } = req.body;
       
       const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
       if (!incident) {
@@ -738,8 +853,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const evidenceData = {
-        ...req.body,
         incidentId: id,
+        evidenceType: evidenceType || "log",
+        location: location || "N/A",
+        submittedBy: "analyst",
       };
       
       const [created] = await db.insert(incidentEvidence).values(evidenceData).returning();
@@ -747,12 +864,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.insert(incidentTimeline).values({
         incidentId: id,
         timestamp: new Date(),
-        actor: req.body.submittedBy || "System",
+        actor: "analyst",
         eventType: "evidence",
         detail: { 
           evidenceId: created.id,
           evidenceType: created.evidenceType,
           location: created.location,
+          description: description || `Added ${created.evidenceType} evidence`,
         },
       });
       
@@ -969,11 +1087,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/controls", async (req: Request, res: Response) => {
     try {
       const validatedData = insertControlSchema.parse(req.body);
+      
+      // Check if control with same controlId already exists
+      const [existing] = await db.select().from(controls).where(eq(controls.controlId, validatedData.controlId));
+      if (existing) {
+        return res.status(409).json({ error: `Control ${validatedData.controlId} already exists` });
+      }
+      
       const [newControl] = await db.insert(controls).values(validatedData).returning();
       res.status(201).json(newControl);
     } catch (error) {
       console.error("Error creating control:", error);
       res.status(400).json({ error: "Failed to create control" });
+    }
+  });
+
+  app.delete("/api/controls/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      // Delete related SOPs first
+      const [control] = await db.select().from(controls).where(eq(controls.id, id));
+      if (!control) {
+        return res.status(404).json({ error: "Control not found" });
+      }
+      
+      if (control.sopId) {
+        await db.delete(sops).where(eq(sops.id, control.sopId));
+      }
+      
+      // Delete policy assignments
+      await db.delete(policyAssignments).where(eq(policyAssignments.controlId, id));
+      
+      // Delete the control
+      await db.delete(controls).where(eq(controls.id, id));
+      
+      console.log(`[Controls] Deleted control ${control.controlId}`);
+      res.json({ success: true, message: `Control ${control.controlId} deleted` });
+    } catch (error) {
+      console.error("Error deleting control:", error);
+      res.status(500).json({ error: "Failed to delete control" });
+    }
+  });
+
+  app.patch("/api/controls/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      const [updatedControl] = await db
+        .update(controls)
+        .set(updates)
+        .where(eq(controls.id, id))
+        .returning();
+      
+      if (!updatedControl) {
+        return res.status(404).json({ error: "Control not found" });
+      }
+      
+      res.json(updatedControl);
+    } catch (error) {
+      console.error("Error updating control:", error);
+      res.status(500).json({ error: "Failed to update control" });
     }
   });
   
@@ -1015,6 +1190,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  app.get("/api/risk-items/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const [risk] = await db
+        .select({
+          id: riskItems.id,
+          title: riskItems.title,
+          description: riskItems.description,
+          assetId: riskItems.assetId,
+          assetName: assets.name,
+          likelihood: riskItems.likelihood,
+          impact: riskItems.impact,
+          score: riskItems.score,
+          residualRisk: riskItems.residualRisk,
+          status: riskItems.status,
+          owner: riskItems.owner,
+        })
+        .from(riskItems)
+        .leftJoin(assets, eq(riskItems.assetId, assets.id))
+        .where(eq(riskItems.id, id));
+      
+      if (!risk) {
+        return res.status(404).json({ error: "Risk not found" });
+      }
+      
+      res.json(risk);
+    } catch (error) {
+      console.error("Error fetching risk item:", error);
+      res.status(500).json({ error: "Failed to fetch risk item" });
+    }
+  });
+
   app.post("/api/risk-items", async (req: Request, res: Response) => {
     try {
       const validatedData = insertRiskItemSchema.parse(req.body);
@@ -1031,6 +1239,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ error: "Failed to create risk item" });
     }
   });
+
+  app.patch("/api/risk-items/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      // Recalculate score if likelihood or impact changed
+      if (updates.likelihood !== undefined || updates.impact !== undefined) {
+        const [existing] = await db.select().from(riskItems).where(eq(riskItems.id, id));
+        if (existing) {
+          const likelihood = updates.likelihood ?? existing.likelihood;
+          const impact = updates.impact ?? existing.impact;
+          updates.score = likelihood * impact;
+        }
+      }
+      
+      const [updatedRisk] = await db
+        .update(riskItems)
+        .set(updates)
+        .where(eq(riskItems.id, id))
+        .returning();
+      
+      if (!updatedRisk) {
+        return res.status(404).json({ error: "Risk not found" });
+      }
+      
+      res.json(updatedRisk);
+    } catch (error) {
+      console.error("Error updating risk item:", error);
+      res.status(500).json({ error: "Failed to update risk item" });
+    }
+  });
+
+  app.delete("/api/risk-items/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      const [deleted] = await db.delete(riskItems).where(eq(riskItems.id, id)).returning();
+      
+      if (!deleted) {
+        return res.status(404).json({ error: "Risk not found" });
+      }
+      
+      console.log(`[Risks] Deleted risk: ${deleted.title}`);
+      res.json({ success: true, message: "Risk deleted" });
+    } catch (error) {
+      console.error("Error deleting risk item:", error);
+      res.status(500).json({ error: "Failed to delete risk item" });
+    }
+  });
+
+  app.get("/api/risk/stats", async (req: Request, res: Response) => {
+    try {
+      const [totalResult] = await db.select({ count: count() }).from(riskItems);
+      const [criticalResult] = await db
+        .select({ count: count() })
+        .from(riskItems)
+        .where(gte(riskItems.score, 20));
+      const [openResult] = await db
+        .select({ count: count() })
+        .from(riskItems)
+        .where(eq(riskItems.status, "Open"));
+      const [avgResult] = await db
+        .select({ avg: sql<number>`COALESCE(AVG(${riskItems.score}), 0)` })
+        .from(riskItems);
+      
+      res.json({
+        total: totalResult?.count || 0,
+        critical: criticalResult?.count || 0,
+        open: openResult?.count || 0,
+        avgScore: parseFloat(avgResult?.avg?.toString() || "0"),
+      });
+    } catch (error) {
+      console.error("Error fetching risk stats:", error);
+      res.status(500).json({ error: "Failed to fetch risk stats" });
+    }
+  });
   
   // ============================================================================
   // DASHBOARD STATS API
@@ -1039,18 +1324,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/stats", async (req: Request, res: Response) => {
     try {
       const [assetCount] = await db.select({ count: count() }).from(assets);
-      const [detectionCount] = await db.select({ count: count() }).from(detections);
+      const [intelEventCount] = await db.select({ count: count() }).from(intelEvents);
+      const [controlCount] = await db.select({ count: count() }).from(controls);
       const [openIncidents] = await db
         .select({ count: count() })
         .from(incidents)
         .where(eq(incidents.status, "Open"));
-      const [controlCount] = await db.select({ count: count() }).from(controls);
       
       res.json({
-        totalAssets: assetCount?.count || 0,
-        totalDetections: detectionCount?.count || 0,
-        openIncidents: openIncidents?.count || 0,
-        totalControls: controlCount?.count || 0,
+        assets: assetCount?.count || 0,
+        intelEvents: intelEventCount?.count || 0,
+        controls: controlCount?.count || 0,
+        incidents: openIncidents?.count || 0,
       });
     } catch (error) {
       console.error("Error fetching stats:", error);
@@ -1063,15 +1348,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       
-      const detectionsByDay = await db
+      const eventsByDay = await db
         .select({
-          date: sql<string>`DATE(${detections.firstSeen})`,
+          date: sql<string>`DATE(${intelEvents.createdAt})`,
           count: count(),
         })
-        .from(detections)
-        .where(gte(detections.firstSeen, sevenDaysAgo))
-        .groupBy(sql`DATE(${detections.firstSeen})`)
-        .orderBy(sql`DATE(${detections.firstSeen})`);
+        .from(intelEvents)
+        .where(gte(intelEvents.createdAt, sevenDaysAgo))
+        .groupBy(sql`DATE(${intelEvents.createdAt})`)
+        .orderBy(sql`DATE(${intelEvents.createdAt})`);
       
       const days = [];
       for (let i = 6; i >= 0; i--) {
@@ -1079,10 +1364,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split("T")[0];
         
-        const dayData = detectionsByDay.find((d) => d.date === dateStr);
+        const dayData = eventsByDay.find((d) => d.date === dateStr);
         days.push({
           date: dateStr,
-          detections: dayData?.count || 0,
+          events: dayData?.count || 0,
         });
       }
       
@@ -1108,6 +1393,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching coverage:", error);
       res.status(500).json({ error: "Failed to fetch coverage" });
+    }
+  });
+  
+  // ============================================================================
+  // RISK SCORING API
+  // ============================================================================
+  
+  app.get("/api/risk-scores", async (req: Request, res: Response) => {
+    try {
+      const riskScores = await riskScorer.calculateAllAssetRisks();
+      res.json(riskScores);
+    } catch (error) {
+      console.error("Error calculating risk scores:", error);
+      res.status(500).json({ error: "Failed to calculate risk scores" });
+    }
+  });
+  
+  app.get("/api/risk-scores/:assetId", async (req: Request, res: Response) => {
+    try {
+      const { assetId } = req.params;
+      const riskScore = await riskScorer.calculateAssetRisk(assetId);
+      
+      if (!riskScore) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+      
+      res.json(riskScore);
+    } catch (error) {
+      console.error("Error calculating risk score:", error);
+      res.status(500).json({ error: "Failed to calculate risk score" });
     }
   });
   
@@ -1251,10 +1566,134 @@ Respond in JSON format:
       });
       
       const result = JSON.parse(completion.choices[0].message.content || "{}");
-      res.json(result);
+      
+      // Save generated controls to database (skip existing ones)
+      const savedControls = [];
+      const skippedControls = [];
+      if (result.controls && Array.isArray(result.controls)) {
+        console.log(`[Protect Agent] Processing ${result.controls.length} generated controls`);
+        for (const control of result.controls) {
+          // Check if control already exists
+          const [existing] = await db.select().from(controls).where(eq(controls.controlId, control.controlId));
+          if (existing) {
+            console.log(`[Protect Agent] Skipping existing control ${control.controlId}`);
+            skippedControls.push(control.controlId);
+            continue;
+          }
+          
+          const controlData = {
+            controlId: control.controlId,
+            family: control.family,
+            title: control.title,
+            description: control.description,
+            csfFunction: control.csfFunction,
+            priority: control.priority || 3,
+            implementationStatus: "Proposed" as const,
+            csfCategory: null,
+            csfSubcategory: null,
+          };
+          
+          const [saved] = await db.insert(controls).values(controlData).returning();
+          savedControls.push(saved);
+        }
+        console.log(`[Protect Agent] Saved ${savedControls.length} new controls, skipped ${skippedControls.length} existing`);
+      }
+      
+      res.json({ controls: savedControls, skipped: skippedControls });
     } catch (error) {
       console.error("Error in protect agent:", error);
       res.status(500).json({ error: "Failed to generate controls" });
+    }
+  });
+
+  // Protect Agent: Generate SOP for Control
+  app.post("/api/protect/generate-sop/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      
+      // Fetch the control
+      const [control] = await db.select().from(controls).where(eq(controls.id, id));
+      if (!control) {
+        return res.status(404).json({ error: "Control not found" });
+      }
+      
+      const prompt = `You are a cybersecurity SOP expert. Generate a Standard Operating Procedure for implementing this NIST 800-53 control:
+
+Control ID: ${control.controlId}
+Title: ${control.title}
+Description: ${control.description}
+Family: ${control.family}
+CSF Function: ${control.csfFunction}
+
+Generate a comprehensive SOP with:
+1. Title - SOP title
+2. Scope - What this SOP covers
+3. Owner - Suggested role responsible
+4. Cadence - How often this should be reviewed/performed
+5. Steps - Array of step-by-step implementation instructions (5-10 steps)
+6. Evidence to Collect - Array of evidence items needed for audit
+7. Success Criteria - How to know the control is properly implemented
+8. Content - Full markdown-formatted SOP document
+
+Respond in JSON format:
+{
+  "title": "<sop title>",
+  "scope": "<scope description>",
+  "owner": "<responsible role>",
+  "cadence": "<review frequency>",
+  "steps": ["<step1>", "<step2>", ...],
+  "evidenceToCollect": ["<evidence1>", "<evidence2>", ...],
+  "successCriteria": "<success criteria>",
+  "content": "<full markdown SOP document>"
+}`;
+      
+      const completion = await openai.chat.completions.create({
+        model: "gpt-5",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 8192,
+      });
+      
+      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      
+      // Create or update SOP
+      const sopData = {
+        controlId: id,
+        title: result.title || `SOP for ${control.title}`,
+        scope: result.scope,
+        owner: result.owner,
+        cadence: result.cadence,
+        steps: result.steps || [],
+        evidenceToCollect: result.evidenceToCollect || [],
+        successCriteria: result.successCriteria,
+        content: result.content,
+      };
+      
+      // Check if SOP already exists for this control
+      const [existingSop] = await db.select().from(sops).where(eq(sops.controlId, id));
+      
+      let savedSop;
+      if (existingSop) {
+        // Update existing SOP
+        [savedSop] = await db.update(sops)
+          .set({ ...sopData, updatedAt: new Date() })
+          .where(eq(sops.id, existingSop.id))
+          .returning();
+      } else {
+        // Insert new SOP
+        [savedSop] = await db.insert(sops).values(sopData).returning();
+        
+        // Link SOP to control
+        await db.update(controls)
+          .set({ sopId: savedSop.id, updatedAt: new Date() })
+          .where(eq(controls.id, id));
+      }
+      
+      console.log(`[Protect] Generated SOP for control ${control.controlId}`);
+      res.json({ sop: savedSop });
+    } catch (error) {
+      console.error("Error generating SOP:", error);
+      res.status(500).json({ error: "Failed to generate SOP" });
     }
   });
   
@@ -1668,6 +2107,305 @@ Respond in JSON format:
     } catch (error) {
       console.error("Error getting recovery summary:", error);
       res.status(500).json({ error: "Failed to get recovery summary" });
+    }
+  });
+
+  // ============================================================================
+  // GOVERN AGENT API (Week 8 - Govern Function)
+  // ============================================================================
+
+  // Run the Govern Agent - computes assertions, KPIs, POA&M, and creates snapshot
+  app.post("/api/govern/run", async (req: Request, res: Response) => {
+    try {
+      const result = await runGovernAgent();
+      res.json(result);
+    } catch (error) {
+      console.error("Error running govern agent:", error);
+      res.status(500).json({ error: "Failed to run govern agent" });
+    }
+  });
+
+  // Get governance summary with latest KPIs
+  app.get("/api/govern/summary", async (req: Request, res: Response) => {
+    try {
+      const summary = await getGovernSummary();
+      res.json(summary);
+    } catch (error) {
+      console.error("Error getting governance summary:", error);
+      res.status(500).json({ error: "Failed to get governance summary" });
+    }
+  });
+
+  // Generate executive report
+  app.get("/api/govern/report", async (req: Request, res: Response) => {
+    try {
+      const report = await generateExecutiveReport();
+      res.json({ report });
+    } catch (error) {
+      console.error("Error generating report:", error);
+      res.status(500).json({ error: "Failed to generate report" });
+    }
+  });
+
+  // ============================================================================
+  // COMPLIANCE ASSERTIONS API
+  // ============================================================================
+
+  // Get all assertions with filtering
+  app.get("/api/compliance/assertions", async (req: Request, res: Response) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const pageSize = parseInt(req.query.pageSize as string) || 50;
+      const func = req.query.function as string;
+      const status = req.query.status as string;
+      const owner = req.query.owner as string;
+      const stale = req.query.stale === "true";
+
+      const conditions = [];
+      if (func && func !== "all") conditions.push(eq(complianceAssertions.csfFunction, func as any));
+      if (status && status !== "all") conditions.push(eq(complianceAssertions.status, status as any));
+      if (owner) conditions.push(eq(complianceAssertions.owner, owner));
+      
+      if (stale) {
+        const staleThreshold = new Date();
+        staleThreshold.setDate(staleThreshold.getDate() - 90);
+        conditions.push(sql`${complianceAssertions.lastVerifiedAt} < ${staleThreshold} OR ${complianceAssertions.lastVerifiedAt} IS NULL`);
+      }
+
+      let query = db.select().from(complianceAssertions);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+
+      const allAssertions = await query
+        .orderBy(asc(complianceAssertions.csfFunction), asc(complianceAssertions.category))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+
+      const [totalResult] = await db.select({ count: count() }).from(complianceAssertions);
+      const total = totalResult?.count || 0;
+
+      res.json({ assertions: allAssertions, total, page, pageSize });
+    } catch (error) {
+      console.error("Error fetching assertions:", error);
+      res.status(500).json({ error: "Failed to fetch assertions" });
+    }
+  });
+
+  // Get single assertion
+  app.get("/api/compliance/assertions/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const [assertion] = await db.select().from(complianceAssertions).where(eq(complianceAssertions.id, id));
+      
+      if (!assertion) {
+        return res.status(404).json({ error: "Assertion not found" });
+      }
+
+      // Get linked evidence
+      const evidence = await db.select().from(evidenceCatalog).where(eq(evidenceCatalog.assertionId, id));
+
+      res.json({ assertion, evidence });
+    } catch (error) {
+      console.error("Error fetching assertion:", error);
+      res.status(500).json({ error: "Failed to fetch assertion" });
+    }
+  });
+
+  // Create/update assertion
+  app.post("/api/compliance/assertions", async (req: Request, res: Response) => {
+    try {
+      const data = insertComplianceAssertionSchema.parse(req.body);
+      const [newAssertion] = await db.insert(complianceAssertions).values(data).returning();
+      res.status(201).json(newAssertion);
+    } catch (error) {
+      console.error("Error creating assertion:", error);
+      res.status(400).json({ error: "Failed to create assertion" });
+    }
+  });
+
+  // Update assertion
+  app.patch("/api/compliance/assertions/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      const [updated] = await db
+        .update(complianceAssertions)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(complianceAssertions.id, id))
+        .returning();
+
+      if (!updated) {
+        return res.status(404).json({ error: "Assertion not found" });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating assertion:", error);
+      res.status(500).json({ error: "Failed to update assertion" });
+    }
+  });
+
+  // ============================================================================
+  // POA&M API
+  // ============================================================================
+
+  // Get all POA&M items
+  app.get("/api/poam", async (req: Request, res: Response) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const pageSize = parseInt(req.query.pageSize as string) || 25;
+      const status = req.query.status as string;
+      const driver = req.query.driver as string;
+      const owner = req.query.owner as string;
+
+      const conditions = [];
+      if (status && status !== "all") conditions.push(eq(poamItems.status, status as any));
+      if (driver && driver !== "all") conditions.push(eq(poamItems.driver, driver as any));
+      if (owner) conditions.push(eq(poamItems.owner, owner));
+
+      let query = db.select().from(poamItems);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+
+      const allItems = await query
+        .orderBy(desc(poamItems.severity), asc(poamItems.dueDate))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+
+      const [totalResult] = await db.select({ count: count() }).from(poamItems);
+      const total = totalResult?.count || 0;
+
+      res.json({ items: allItems, total, page, pageSize });
+    } catch (error) {
+      console.error("Error fetching POA&M items:", error);
+      res.status(500).json({ error: "Failed to fetch POA&M items" });
+    }
+  });
+
+  // Get single POA&M item
+  app.get("/api/poam/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const [item] = await db.select().from(poamItems).where(eq(poamItems.id, id));
+      
+      if (!item) {
+        return res.status(404).json({ error: "POA&M item not found" });
+      }
+
+      res.json(item);
+    } catch (error) {
+      console.error("Error fetching POA&M item:", error);
+      res.status(500).json({ error: "Failed to fetch POA&M item" });
+    }
+  });
+
+  // Create POA&M item
+  app.post("/api/poam", async (req: Request, res: Response) => {
+    try {
+      const data = insertPoamItemSchema.parse(req.body);
+      const [newItem] = await db.insert(poamItems).values(data).returning();
+      res.status(201).json(newItem);
+    } catch (error) {
+      console.error("Error creating POA&M item:", error);
+      res.status(400).json({ error: "Failed to create POA&M item" });
+    }
+  });
+
+  // Update POA&M item
+  app.patch("/api/poam/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      // If status is being set to Completed, set completedAt
+      if (updates.status === "Completed" && !updates.completedAt) {
+        updates.completedAt = new Date();
+      }
+
+      const [updated] = await db
+        .update(poamItems)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(poamItems.id, id))
+        .returning();
+
+      if (!updated) {
+        return res.status(404).json({ error: "POA&M item not found" });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating POA&M item:", error);
+      res.status(500).json({ error: "Failed to update POA&M item" });
+    }
+  });
+
+  // ============================================================================
+  // METRICS SNAPSHOTS API
+  // ============================================================================
+
+  // Get metrics snapshots for trends
+  app.get("/api/metrics/snapshots", async (req: Request, res: Response) => {
+    try {
+      const metric = req.query.metric as string;
+      const period = req.query.period as string || "30d";
+      
+      // Parse period (e.g., "30d", "7d", "90d")
+      const days = parseInt(period.replace("d", "")) || 30;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+
+      const snapshots = await db
+        .select()
+        .from(governMetricsSnapshots)
+        .where(gte(governMetricsSnapshots.snapshotDate, startDate))
+        .orderBy(asc(governMetricsSnapshots.snapshotDate));
+
+      res.json({ snapshots, period, metric });
+    } catch (error) {
+      console.error("Error fetching metrics snapshots:", error);
+      res.status(500).json({ error: "Failed to fetch metrics snapshots" });
+    }
+  });
+
+  // ============================================================================
+  // EVIDENCE CATALOG API
+  // ============================================================================
+
+  // Get evidence items
+  app.get("/api/evidence", async (req: Request, res: Response) => {
+    try {
+      const controlId = req.query.controlId as string;
+      const assertionId = req.query.assertionId as string;
+
+      const conditions = [];
+      if (controlId) conditions.push(eq(evidenceCatalog.controlId, controlId));
+      if (assertionId) conditions.push(eq(evidenceCatalog.assertionId, assertionId));
+
+      let query = db.select().from(evidenceCatalog);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+
+      const items = await query.orderBy(desc(evidenceCatalog.submittedAt));
+      res.json({ items });
+    } catch (error) {
+      console.error("Error fetching evidence:", error);
+      res.status(500).json({ error: "Failed to fetch evidence" });
+    }
+  });
+
+  // Add evidence
+  app.post("/api/evidence", async (req: Request, res: Response) => {
+    try {
+      const data = insertEvidenceCatalogSchema.parse(req.body);
+      const [newEvidence] = await db.insert(evidenceCatalog).values(data).returning();
+      res.status(201).json(newEvidence);
+    } catch (error) {
+      console.error("Error creating evidence:", error);
+      res.status(400).json({ error: "Failed to create evidence" });
     }
   });
 

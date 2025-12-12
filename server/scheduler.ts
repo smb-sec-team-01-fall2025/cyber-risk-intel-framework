@@ -2,6 +2,7 @@ import { db } from "./db";
 import { incidents, drPlans, backupSets, restoreTests } from "@shared/schema";
 import { osintOrchestrator } from "./osint-adapters";
 import { alertManager } from "./alert-system";
+import { riskScorer } from "./risk-scorer";
 import { sql, and, eq, lte, desc } from "drizzle-orm";
 
 // ============================================================================
@@ -18,8 +19,57 @@ export interface SchedulerConfig {
 }
 
 // ============================================================================
-// BACKGROUND SCHEDULER
+// BACKGROUND SCHEDULER WITH JITTER, LOCKS, AND TIMEOUTS
 // ============================================================================
+
+function addJitter(intervalMs: number, maxJitterPercent = 10): number {
+  const jitterRange = intervalMs * (maxJitterPercent / 100);
+  const jitter = Math.floor(Math.random() * jitterRange * 2) - jitterRange;
+  return Math.max(1000, intervalMs + jitter);
+}
+
+const jobLocks = new Map<string, { locked: boolean; startedAt: number }>();
+
+function acquireLock(jobName: string, timeoutMs: number = 300000): boolean {
+  const lock = jobLocks.get(jobName);
+  const now = Date.now();
+  
+  if (lock && lock.locked) {
+    if (now - lock.startedAt > timeoutMs) {
+      console.warn(`[Scheduler] Lock timeout for ${jobName}, forcing release`);
+      releaseLock(jobName);
+    } else {
+      console.log(`[Scheduler] Job ${jobName} already running, skipping`);
+      return false;
+    }
+  }
+  
+  jobLocks.set(jobName, { locked: true, startedAt: now });
+  return true;
+}
+
+function releaseLock(jobName: string): void {
+  jobLocks.set(jobName, { locked: false, startedAt: 0 });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, jobName: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Job ${jobName} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId!);
+    throw error;
+  }
+}
 
 export class BackgroundScheduler {
   private config: SchedulerConfig;
@@ -27,6 +77,7 @@ export class BackgroundScheduler {
   private slaIntervalId?: NodeJS.Timeout;
   private rpoRtoIntervalId?: NodeJS.Timeout;
   private isRunning = false;
+  private readonly JOB_TIMEOUT_MS = 300000; // 5 minutes
   
   constructor(config?: SchedulerConfig) {
     this.config = {
@@ -91,20 +142,38 @@ export class BackgroundScheduler {
   }
   
   private startOsintScans(): void {
-    console.log(`[Scheduler] Starting OSINT scans every ${this.config.osintScanInterval}ms`);
+    const baseInterval = this.config.osintScanInterval || 3600000;
+    console.log(`[Scheduler] Starting OSINT scans with base interval ${baseInterval}ms (jitter applied each run)`);
     
-    this.runOsintScan();
+    setTimeout(() => this.runOsintScan(), addJitter(5000, 50));
     
-    this.osintIntervalId = setInterval(() => {
-      this.runOsintScan();
-    }, this.config.osintScanInterval);
+    const scheduleNext = () => {
+      const nextInterval = addJitter(baseInterval);
+      this.osintIntervalId = setTimeout(() => {
+        this.runOsintScan().finally(() => {
+          if (this.isRunning && this.config.enableOsintScans) {
+            scheduleNext();
+          }
+        });
+      }, nextInterval);
+    };
+    
+    setTimeout(scheduleNext, addJitter(baseInterval));
   }
   
   private async runOsintScan(): Promise<void> {
+    if (!acquireLock("osint_scan", this.JOB_TIMEOUT_MS)) {
+      return;
+    }
+    
     try {
       console.log("[Scheduler] Running scheduled OSINT scan...");
       
-      const result = await osintOrchestrator.runFullScan();
+      const result = await withTimeout(
+        osintOrchestrator.runFullScan(),
+        this.JOB_TIMEOUT_MS,
+        "osint_scan"
+      );
       
       console.log(
         `[Scheduler] OSINT scan complete: ${result.totalScanned} scanned, ` +
@@ -113,9 +182,13 @@ export class BackgroundScheduler {
       
       if (result.newIntelEvents > 0) {
         console.log(`[Scheduler] Found ${result.newIntelEvents} new threat intelligence events`);
+        console.log("[Scheduler] Recalculating asset risk scores...");
+        await riskScorer.calculateAndPersistRiskScores();
       }
     } catch (error) {
       console.error("[Scheduler] Error running OSINT scan:", error);
+    } finally {
+      releaseLock("osint_scan");
     }
   }
   

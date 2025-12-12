@@ -1,0 +1,43 @@
+# Govern Agent Configuration Profile
+# This file defines thresholds and targets for compliance monitoring and KPIs
+
+targets:
+  coverage_min: 0.65                  # Minimum acceptable CSF coverage (65%)
+  evidence_max_age_days: 90           # Evidence older than this is considered stale
+  mttr_target_minutes: 480            # Target MTTR (8 hours)
+  mttd_target_minutes: 60             # Target MTTD (1 hour)
+  ir_sla_target_pct: 0.9              # Target IR SLA compliance (90%)
+  rpo_rto_target_pct: 0.85            # Target RPO/RTO compliance (85%)
+  max_open_critical_risks: 3          # Maximum allowed open critical risks
+
+scope:
+  include_functions:
+    - Identify
+    - Protect
+    - Detect
+    - Respond
+    - Recover
+    - Govern
+  exclude_subcategories: []           # Add subcategory IDs here if truly N/A
+
+owners:
+  default_assertion_owner: "compliance"
+
+review:
+  cadence_days: 30                    # Days between assertion reviews
+  auto_flag_stale: true               # Automatically flag stale evidence
+
+alerting:
+  notify_on_coverage_drop: true
+  notify_on_sla_breach: true
+  notify_on_critical_risk: true
+  alert_channels:
+    - email
+    - webhook
+
+# Severity thresholds for POA&M generation
+poam_triggers:
+  coverage_gap_threshold: 0.5         # Generate POA&M if coverage below 50%
+  evidence_stale_severity: 3          # Severity for stale evidence POA&M items
+  sla_breach_severity: 4              # Severity for SLA breach POA&M items
+  rpo_rto_gap_severity: 4             # Severity for RPO/RTO gap POA&M items
