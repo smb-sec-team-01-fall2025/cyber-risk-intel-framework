@@ -1,0 +1,38 @@
+# Security Headers Report
+# Generated: December 2025
+# Target: SMB Security Platform
+
+# Expected headers from application:
+# (Run `curl -sI https://your-domain.com` on deployed instance)
+
+Expected Response Headers:
+-------------------------
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-XSS-Protection: 1; mode=block
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: geolocation=(), microphone=(), camera=()
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' wss: ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload (production only)
+
+Rate Limit Headers:
+------------------
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: [varies]
+X-RateLimit-Reset: [unix timestamp]
+
+Request Tracking:
+-----------------
+X-Request-ID: [uuid] (returned on all responses)
+
+# To verify on deployed instance:
+# curl -sI https://your-domain.com | grep -E "(X-Frame|X-Content-Type|Strict-Transport|Content-Security|X-Request-ID)"
+
+# Sample output (placeholder - update after deployment):
+# HTTP/2 200
+# x-content-type-options: nosniff
+# x-frame-options: DENY
+# referrer-policy: strict-origin-when-cross-origin
+# content-security-policy: default-src 'self'; ...
+# strict-transport-security: max-age=31536000; includeSubDomains; preload
+# x-request-id: abc123-def456-...

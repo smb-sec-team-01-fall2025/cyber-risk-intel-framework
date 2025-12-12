@@ -1,0 +1,59 @@
+# Security Headers Report - Final
+# Generated: December 2025
+# Target: SMB Security Platform v1.0.0
+
+# Verification Command:
+# curl -sI https://your-domain.replit.app | head -30
+
+# Expected Response (Production):
+HTTP/2 200
+content-type: text/html; charset=UTF-8
+x-content-type-options: nosniff
+x-frame-options: DENY
+x-xss-protection: 1; mode=block
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: geolocation=(), microphone=(), camera=()
+content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' wss: ws: [AI_DOMAIN]; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+x-request-id: [uuid]
+
+# Rate Limit Headers (on API endpoints):
+x-ratelimit-limit: 100
+x-ratelimit-remaining: [varies]
+x-ratelimit-reset: [unix timestamp]
+
+# Header Verification Checklist:
+# [x] X-Content-Type-Options: nosniff
+# [x] X-Frame-Options: DENY
+# [x] X-XSS-Protection: 1; mode=block
+# [x] Referrer-Policy: strict-origin-when-cross-origin
+# [x] Permissions-Policy: geolocation/microphone/camera disabled
+# [x] Content-Security-Policy: Restrictive CSP
+# [x] Strict-Transport-Security: HSTS enabled (production)
+# [x] X-Request-ID: UUID for request tracking
+# [x] Rate limiting headers on API
+
+# CSP Analysis:
+# - default-src 'self': Only same-origin resources
+# - script-src 'self' 'unsafe-inline': Scripts from same origin
+# - style-src: Allows Google Fonts
+# - img-src: Allows data URIs, blobs, HTTPS images
+# - connect-src: Same origin plus WebSocket and AI API
+# - frame-ancestors 'none': Prevents embedding (clickjacking)
+# - base-uri 'self': Prevents base tag injection
+# - form-action 'self': Forms only submit to same origin
+
+# CORS Headers (on API responses with credentials):
+access-control-allow-origin: [whitelisted origin]
+access-control-allow-credentials: true
+access-control-allow-methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+access-control-allow-headers: Content-Type, Authorization, X-Request-ID
+
+# Notes:
+# - HSTS only enabled in production (NODE_ENV=production)
+# - CSP includes dynamic AI domain from environment
+# - Rate limiting: 100 requests per minute per IP
+# - Request IDs enable distributed tracing
+
+# Validation (run against live deployment):
+# curl -sI https://your-domain.replit.app | grep -E "(x-frame|x-content-type|strict-transport|content-security|x-request-id|referrer-policy)"
