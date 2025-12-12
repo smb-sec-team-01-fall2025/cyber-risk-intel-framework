@@ -42,6 +42,11 @@ export const resilienceFindingTypeEnum = pgEnum("resilience_finding_type", [
 ]);
 export const resilienceFindingStatusEnum = pgEnum("resilience_finding_status", ["open", "in_progress", "resolved", "accepted_risk"]);
 
+// Week 8: Govern Function enums
+export const complianceStatusEnum = pgEnum("compliance_status", ["NotAssessed", "NotApplicable", "Planned", "PartiallyImplemented", "Implemented"]);
+export const poamDriverEnum = pgEnum("poam_driver", ["coverage_gap", "stale_evidence", "sla_breach", "rpo_rto_gap", "control_missing", "kpi_below_target"]);
+export const poamStatusEnum = pgEnum("poam_status", ["Open", "In-Progress", "Completed", "Deferred"]);
+
 // ============================================================================
 // WEEK 1-2: CORE TABLES (Users, Assets, Intel Events, Risk Items)
 // ============================================================================
@@ -64,6 +69,7 @@ export const assets = pgTable("assets", {
   owner: text("owner"),
   businessUnit: text("business_unit"),
   criticality: integer("criticality").notNull().default(2), // 1-5
+  riskScore: integer("risk_score").default(0), // criticality × max_intel_severity_last_7d
   dataSensitivity: dataSensitivityEnum("data_sensitivity").default("Low"),
   description: text("description"),
   tags: text("tags").array(),
@@ -76,7 +82,8 @@ export const intelEvents = pgTable("intel_events", {
   source: detectionSourceEnum("source").notNull(),
   indicator: varchar("indicator", { length: 255 }).notNull(),
   raw: json("raw").notNull(),
-  severity: integer("severity").notNull().default(1), // 1-5
+  severity: integer("severity").notNull().default(1), // 1-5 (AI-generated)
+  description: text("description"), // AI-generated summary of raw data
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -216,6 +223,7 @@ export const incidents = pgTable("incidents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   incidentNumber: varchar("incident_number", { length: 50 }).unique(), // e.g., "INC-104"
   title: text("title").notNull(),
+  description: text("description"), // User-provided incident description
   severity: incidentSeverityEnum("severity").notNull(),
   status: incidentStatusEnum("status").default("Open"),
   openedAt: timestamp("opened_at").defaultNow(),
@@ -350,6 +358,83 @@ export const resilienceFindings = pgTable("resilience_findings", {
   resolvedAt: timestamp("resolved_at"),
   assignee: text("assignee"),
   aiRunId: varchar("ai_run_id"), // correlate with agent execution
+});
+
+// ============================================================================
+// WEEK 8: GOVERN FUNCTION TABLES
+// ============================================================================
+
+// Compliance Assertions - structured assertion per CSF subcategory
+export const complianceAssertions = pgTable("compliance_assertions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  csfFunction: csfFunctionEnum("csf_function").notNull(),
+  category: varchar("category", { length: 20 }).notNull(), // e.g., "ID.AM", "PR.AC"
+  subcategory: varchar("subcategory", { length: 50 }).notNull(), // e.g., "ID.AM-1", "PR.AC-1"
+  status: complianceStatusEnum("status").notNull().default("NotAssessed"),
+  owner: text("owner"),
+  evidenceRefs: text("evidence_refs").array().default(sql`'{}'::text[]`), // references to evidence catalog
+  lastVerifiedAt: timestamp("last_verified_at"),
+  nextReviewDue: timestamp("next_review_due"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Evidence Catalog - centralized evidence repository
+export const evidenceCatalog = pgTable("evidence_catalog", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  controlId: varchar("control_id").references(() => controls.id, { onDelete: "set null" }),
+  assertionId: varchar("assertion_id").references(() => complianceAssertions.id, { onDelete: "set null" }),
+  evidenceType: evidenceTypeEnum("evidence_type").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  location: text("location").notNull(), // file path, URL, or reference
+  hash: text("hash"), // file hash for integrity verification
+  submittedBy: text("submitted_by").notNull(),
+  submittedAt: timestamp("submitted_at").defaultNow(),
+  expiresAt: timestamp("expires_at"), // for time-sensitive evidence
+});
+
+// Govern Metrics Snapshots - KPI history for trend analysis
+export const governMetricsSnapshots = pgTable("govern_metrics_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  snapshotDate: timestamp("snapshot_date").notNull().defaultNow(),
+  coveragePct: integer("coverage_pct").notNull(), // 0-100
+  evidenceFreshPct: integer("evidence_fresh_pct").notNull(), // 0-100
+  mttrMinutes: integer("mttr_minutes"), // Mean Time To Resolve
+  mttdMinutes: integer("mttd_minutes"), // Mean Time To Detect
+  irSlaPct: integer("ir_sla_pct"), // IR SLA compliance 0-100
+  rpoRtoPct: integer("rpo_rto_pct"), // RPO/RTO compliance 0-100
+  openRisksCritical: integer("open_risks_critical").default(0),
+  openRisksHigh: integer("open_risks_high").default(0),
+  openRisksMedium: integer("open_risks_medium").default(0),
+  openRisksLow: integer("open_risks_low").default(0),
+  openPoamItems: integer("open_poam_items").default(0),
+  totalAssets: integer("total_assets").default(0),
+  totalControls: integer("total_controls").default(0),
+  implementedControls: integer("implemented_controls").default(0),
+  metrics: json("metrics"), // Additional metrics as JSON
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// POA&M Items - Plan of Action & Milestones
+export const poamItems = pgTable("poam_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  driver: poamDriverEnum("driver").notNull(), // What caused this POA&M item
+  severity: integer("severity").notNull().default(3), // 1-5
+  owner: text("owner"),
+  dueDate: timestamp("due_date"),
+  status: poamStatusEnum("status").notNull().default("Open"),
+  linkedAssertionId: varchar("linked_assertion_id").references(() => complianceAssertions.id, { onDelete: "set null" }),
+  linkedRiskItemId: varchar("linked_risk_item_id").references(() => riskItems.id, { onDelete: "set null" }),
+  linkedControlId: varchar("linked_control_id").references(() => controls.id, { onDelete: "set null" }),
+  milestonesJson: json("milestones_json"), // [{title, dueDate, status}]
+  remediation: text("remediation"), // Planned remediation steps
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // ============================================================================
@@ -615,3 +700,51 @@ export const insertResilienceFindingSchema = createInsertSchema(resilienceFindin
 
 export type InsertResilienceFinding = z.infer<typeof insertResilienceFindingSchema>;
 export type ResilienceFinding = typeof resilienceFindings.$inferSelect;
+
+// Week 8: Govern Function Tables
+
+// Compliance Assertions
+export const insertComplianceAssertionSchema = createInsertSchema(complianceAssertions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  status: z.enum(["NotAssessed", "NotApplicable", "Planned", "PartiallyImplemented", "Implemented"]),
+  csfFunction: z.enum(["Identify", "Protect", "Detect", "Respond", "Recover", "Govern"]),
+});
+
+export type InsertComplianceAssertion = z.infer<typeof insertComplianceAssertionSchema>;
+export type ComplianceAssertion = typeof complianceAssertions.$inferSelect;
+
+// Evidence Catalog
+export const insertEvidenceCatalogSchema = createInsertSchema(evidenceCatalog).omit({
+  id: true,
+  submittedAt: true,
+});
+
+export type InsertEvidenceCatalog = z.infer<typeof insertEvidenceCatalogSchema>;
+export type EvidenceCatalog = typeof evidenceCatalog.$inferSelect;
+
+// Govern Metrics Snapshots
+export const insertGovernMetricsSnapshotSchema = createInsertSchema(governMetricsSnapshots).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertGovernMetricsSnapshot = z.infer<typeof insertGovernMetricsSnapshotSchema>;
+export type GovernMetricsSnapshot = typeof governMetricsSnapshots.$inferSelect;
+
+// POA&M Items
+export const insertPoamItemSchema = createInsertSchema(poamItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  completedAt: true,
+}).extend({
+  driver: z.enum(["coverage_gap", "stale_evidence", "sla_breach", "rpo_rto_gap", "control_missing", "kpi_below_target"]),
+  status: z.enum(["Open", "In-Progress", "Completed", "Deferred"]),
+  severity: z.number().min(1).max(5),
+});
+
+export type InsertPoamItem = z.infer<typeof insertPoamItemSchema>;
+export type PoamItem = typeof poamItems.$inferSelect;
